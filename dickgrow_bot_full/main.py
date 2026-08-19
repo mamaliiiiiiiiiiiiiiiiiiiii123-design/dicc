@@ -1,0 +1,738 @@
+
+import os, sqlite3, random, time
+import aiohttp
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
+from aiogram.types import BufferedInputFile
+
+TOKEN = os.getenv("BOT_TOKEN")
+DB="database.db"
+COOLDOWN=1*60*60
+ADMIN_ID=5952134460
+
+db=sqlite3.connect(DB)
+c=db.cursor()
+c.execute("CREATE TABLE IF NOT EXISTS users(user_id INTEGER PRIMARY KEY,name TEXT,size INTEGER DEFAULT 0,debt INTEGER DEFAULT 0,last_grow INTEGER DEFAULT 0)")
+c.execute("CREATE TABLE IF NOT EXISTS battles(id INTEGER PRIMARY KEY AUTOINCREMENT,creator INTEGER,bet INTEGER,active INTEGER DEFAULT 1)")
+c.execute("CREATE TABLE IF NOT EXISTS loans(lender_id INTEGER, borrower_id INTEGER, amount INTEGER, loan_time INTEGER DEFAULT 0)")
+c.execute("CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT, seller_id INTEGER, celeb TEXT, price INTEGER, active INTEGER DEFAULT 1)")
+c.execute("CREATE TABLE IF NOT EXISTS game_loans(user_id INTEGER PRIMARY KEY, amount INTEGER, due_time INTEGER)")
+db.commit()
+
+def user(uid,name):
+    c.execute("INSERT OR IGNORE INTO users(user_id,name) VALUES(?,?)",(uid,name))
+    c.execute("UPDATE users SET name=? WHERE user_id=?",(name,uid))
+    db.commit()
+
+dp=Dispatcher()
+
+@dp.message(Command("grow"))
+async def grow(m:Message):
+    user(m.from_user.id,m.from_user.full_name)
+    size,last=c.execute("SELECT size,last_grow FROM users WHERE user_id=?",(m.from_user.id,)).fetchone()
+    now=int(time.time())
+    if now-last<COOLDOWN:
+        rem=(COOLDOWN-(now-last))//60
+        return await m.reply(f"⏳ هنوز {rem} دقیقه تا رشد بعدی مونده!")
+    delta=random.randint(5,20)
+    size=max(0,size+delta)
+    c.execute("UPDATE users SET size=?,last_grow=? WHERE user_id=?",(size,now,m.from_user.id)); db.commit()
+    await m.reply(
+        f"🌱 نتیجه رشد\n\n🍆 تغییر: {delta:+} سانت\n📏 اندازه فعلی: {size} سانت\n😎 ادامه بده قهرمان!"
+    )
+
+@dp.message(Command("size"))
+async def size(m:Message):
+    user(m.from_user.id,m.from_user.full_name)
+    s,d=c.execute("SELECT size,debt FROM users WHERE user_id=?",(m.from_user.id,)).fetchone()
+    await m.reply(
+        f"📊 پروفایل شما\n\n🍆 اندازه: {s} سانت\n💸 بدهی: {d} سانت"
+    )
+
+@dp.message(Command("loan"))
+async def loan(m:Message):
+    try:
+        amt=int(m.text.split()[1])
+    except:
+        return await m.reply("Reply to a user and use /loan 5")
+
+    if not m.reply_to_message:
+        return await m.reply("Reply to a user and use /loan 5")
+
+    lender=m.from_user.id
+    borrower=m.reply_to_message.from_user.id
+
+    if lender==borrower:
+        return await m.reply("You can't loan yourself.")
+
+    user(lender,m.from_user.full_name)
+    user(borrower,m.reply_to_message.from_user.full_name)
+
+    s=c.execute("SELECT size FROM users WHERE user_id=?",(lender,)).fetchone()[0]
+
+    if s<amt:
+        return await m.reply("Not enough cm.")
+
+    day_ago = int(time.time()) - 24*60*60
+    borrowed_today = c.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM loans WHERE borrower_id=? AND loan_time>?",
+        (borrower, day_ago)
+    ).fetchone()[0]
+
+    if borrowed_today + amt > 50:
+        remaining = max(0, 50 - borrowed_today)
+        return await m.reply(
+            f"❌ این کاربر امروز {borrowed_today} سانت وام گرفته!\n"
+            f"حداکثر روزانه ۵۰ سانته.\n"
+            f"{'دیگه نمیتونه وام بگیره!' if remaining == 0 else f'فقط {remaining} سانت دیگه میتونه بگیره.'}"
+        )
+
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?",(amt,lender))
+    c.execute("UPDATE users SET size=size+? WHERE user_id=?",(amt,borrower))
+    c.execute("INSERT INTO loans VALUES(?,?,?)",(lender,borrower,int(time.time())))
+    db.commit()
+
+    await m.reply(f"💸 وام انجام شد!\n\nمقدار: {amt} سانت\n📊 این کاربر امروز {borrowed_today+amt}/50 سانت وام گرفته")
+
+@dp.message(Command("repay"))
+async def repay(m:Message):
+    try: amt=int(m.text.split()[1])
+    except: return await m.reply("Usage: /repay 5")
+    user(m.from_user.id,m.from_user.full_name)
+    s,d=c.execute("SELECT size,debt FROM users WHERE user_id=?",(m.from_user.id,)).fetchone()
+    amt=min(amt,s,d)
+    c.execute("UPDATE users SET size=?,debt=? WHERE user_id=?",(s-amt,d-amt,m.from_user.id)); db.commit()
+    await m.reply(f"✅ Repaid {amt} cm")
+
+@dp.message(Command("top"))
+async def top(m:Message):
+    rows=c.execute("SELECT name,size FROM users ORDER BY size DESC LIMIT 10").fetchall()
+    txt="🏆 جدول بزرگان\n\n"
+    for i,(n,s) in enumerate(rows,1): txt+=f"{i}. {n} — {s} سانت\n"
+    await m.reply(txt)
+
+@dp.message(Command("pvp"))
+async def pvp(m:Message):
+    try: bet=int(m.text.split()[1])
+    except: return await m.reply("Usage: /pvp 30")
+    user(m.from_user.id,m.from_user.full_name)
+    s=c.execute("SELECT size FROM users WHERE user_id=?",(m.from_user.id,)).fetchone()[0]
+    if s<bet: return await m.reply("Not enough cm.")
+    cur = c.execute(
+        "INSERT INTO battles(creator,bet) VALUES(?,?)",
+        (m.from_user.id, bet)
+    )
+    db.commit()
+    bid=cur.lastrowid
+    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ قبول دوئل",callback_data=f"pvp:{bid}")]])
+    await m.reply(f"⚔️ دوئل مرگبار!\n\n💰 شرط: {bet} سانت\n\nبرنده همه رو می‌بره!",reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("pvp:"))
+async def accept(q:CallbackQuery):
+    bid=int(q.data.split(":")[1])
+    row=c.execute("SELECT creator,bet,active FROM battles WHERE id=?",(bid,)).fetchone()
+    if not row or row[2]==0: return await q.answer("Expired")
+    creator,bet,_=row
+    if q.from_user.id==creator: return await q.answer("Not yourself")
+    user(q.from_user.id,q.from_user.full_name)
+    s1=c.execute("SELECT size FROM users WHERE user_id=?",(creator,)).fetchone()[0]
+    s2=c.execute("SELECT size FROM users WHERE user_id=?",(q.from_user.id,)).fetchone()[0]
+    if s1<bet or s2<bet: return await q.answer("Not enough cm")
+    winner=random.choice([creator,q.from_user.id])
+    loser=q.from_user.id if winner==creator else creator
+    c.execute("UPDATE users SET size=size+? WHERE user_id=?",(bet,winner))
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?",(bet,loser))
+    c.execute("UPDATE battles SET active=0 WHERE id=?",(bid,))
+    db.commit()
+    winner_name=c.execute("SELECT name FROM users WHERE user_id=?",(winner,)).fetchone()[0]
+    await q.message.edit_text(f"🏆 پایان دوئل!\n\n👑 برنده: {winner_name}\n💰 جایزه: {bet} سانت\n\n😂 بازنده باید بیشتر تمرین کنه!")
+
+
+# ===== Celebrity Collection System =====
+c.execute("CREATE TABLE IF NOT EXISTS collections(user_id INTEGER, celeb TEXT, paid_price INTEGER DEFAULT 0, locked INTEGER DEFAULT 0)")
+db.commit()
+
+
+CELEBS = {
+    "Ana de Armas": ("S",300,150,"https://i.postimg.cc/JzdhGdRj/download-(4).jpg"),
+    "Kylie Jenner": ("S",300,150,"https://i.postimg.cc/HkKppcty/download-(5).jpg"),
+    "Sydney Sweeney": ("S",300,150,"https://i.postimg.cc/4NxZVbLF/download-(6).jpg"),
+    "Olivia Cooke": ("A",200,100,"https://i.postimg.cc/G3kJGv8k/olivia-cooke-in-the-girlfriend.jpg"),
+    "Scarlett Johansson": ("A",200,100,"https://i.postimg.cc/rmT2mSRG/download-(7).jpg"),
+    "Sabrina Carpenter": ("A",200,100,"https://i.postimg.cc/4dPqxjgJ/Sabrina-Carpenter.jpg"),
+    "Dua Lipa": ("A",100,50,"https://i.postimg.cc/VsM021zP/download-(8).jpg"),
+    "Anya Taylor Joy": ("B",100,50,"https://i.postimg.cc/1XF4D05F/margot-anya-taylor-joy.jpg"),
+    "Jenna Ortega": ("A",100,50,"https://i.postimg.cc/cL068nqV/jenna-ortega.jpg"),
+    "Sophie Tatcher": ("A",100,50,"https://i.postimg.cc/d0S0XNhp/1031465120909581257.jpg"),
+    "Mia Plays": ("B",100,50,"https://i.postimg.cc/GmLhpnYg/1083186147870726920.jpg"),
+    "Angelina Jolie": ("A",100,50,"https://i.postimg.cc/g05Y4w5Y/angelina-jolie-(1).jpg"),
+    "Anne Hauthway": ("B",100,50,"https://i.postimg.cc/kgY9X67D/Anne-Hathaway.jpg"),
+    "Emma Watson": ("B",100,50,"https://i.postimg.cc/kGyPrDjq/Belle.jpg"),
+    "Billie Eilish": ("S",100,50,"https://i.postimg.cc/L6NFNYYY/Billie-Eilish.jpg"),
+    "Emilia Clarke": ("B",100,50,"https://i.postimg.cc/vZkjNWQ2/download-(1).jpg"),
+    "Billie Eiliish": ("A",100,50,"https://i.postimg.cc/kGbjb56c/download-(9).jpg"),
+    "Folorance Pugh": ("B",100,50,"https://i.postimg.cc/D0NdwPp4/florence.jpg"),
+    "AZAD": ("B",100,50,"https://i.postimg.cc/k4XxNpkW/images-(1).jpg"),
+    "Elizabet Olson": ("B",100,50,"https://i.postimg.cc/MKxj14V6/Sally-Owen-icon.jpg"),
+    "Victoria Pederetti": ("B",100,50,"https://i.postimg.cc/5tFthq8y/victoria-pedretti.jpg"),
+    "Double KIIR": ("A",100,50,"https://i.postimg.cc/G38vrV1C/ssss.jpg"),
+    "Habibi": ("B",100,50,"https://i.postimg.cc/wBj6zCZN/sd.jpg"),
+    "Faghih": ("B",100,50,"https://i.postimg.cc/sXfGtH4f/sss-1.jpg"),
+    "Natalie Dyer": ("B",100,50,"https://i.postimg.cc/j5cYmL3J/this-pic.jpg"),
+}
+
+
+TIER_CELEBS = {
+    "S": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "S"],
+    "A": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "A"],
+    "B": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "B"],
+}
+TIER_LABELS = {
+    "S": "🥇 Tier S",
+    "A": "🥈 Tier A",
+    "B": "🥉 Tier B",
+}
+TIER_PRICES = {"S": (300, 150), "A": (200, 100), "B": (100, 50)}
+
+def build_market_caption(tier, page):
+    celebs = TIER_CELEBS[tier]
+    name, price, photo = celebs[page]
+    buy_price, spin_price = TIER_PRICES[tier]
+    label = TIER_LABELS[tier]
+    txt = (
+        f"🛒 بازار سلبریتی\n"
+        f"{label} — صفحه {page+1}/{len(celebs)}\n\n"
+        f"👑 {name}\n"
+        f"💰 خرید: {price} سانت\n"
+        f"🎰 اسپین: {spin_price} سانت\n\n"
+        f"🛒 /buy {name}\n"
+        f"🎰 /spin {tier.lower()}"
+    )
+    return txt, photo
+
+def build_market_kb(tier, page):
+    celebs = TIER_CELEBS[tier]
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"mkt:{tier}:{page-1}"))
+    if page < len(celebs) - 1:
+        buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"mkt:{tier}:{page+1}"))
+    return InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+
+async def fetch_photo(url: str) -> BufferedInputFile | None:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    filename = url.split("/")[-1]
+                    return BufferedInputFile(data, filename=filename)
+    except Exception:
+        pass
+    return None
+
+@dp.message(Command("market"))
+async def market(m:Message):
+    for tier in ["S", "A", "B"]:
+        txt, photo_url = build_market_caption(tier, 0)
+        kb = build_market_kb(tier, 0)
+        photo = await fetch_photo(photo_url) if photo_url else None
+        if photo:
+            await m.bot.send_photo(m.chat.id, photo, caption=txt, reply_markup=kb)
+        else:
+            await m.bot.send_message(m.chat.id, txt, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("mkt:"))
+async def market_page_nav(q: CallbackQuery):
+    _, tier, page = q.data.split(":")
+    page = int(page)
+    txt, photo_url = build_market_caption(tier, page)
+    kb = build_market_kb(tier, page)
+    photo = await fetch_photo(photo_url) if photo_url else None
+    try:
+        if photo and q.message.photo:
+            await q.message.edit_media(
+                media=InputMediaPhoto(media=photo, caption=txt),
+                reply_markup=kb
+            )
+        elif q.message.photo:
+            await q.message.edit_caption(caption=txt, reply_markup=kb)
+        else:
+            await q.message.edit_text(txt, reply_markup=kb)
+    except Exception as e:
+        await q.answer(f"خطا: {e}", show_alert=True)
+        return
+    await q.answer()
+
+@dp.message(Command("collection"))
+async def collection(m:Message):
+    if m.reply_to_message:
+        target = m.reply_to_message.from_user
+        user(target.id, target.full_name)
+        rows = c.execute("SELECT celeb FROM collections WHERE user_id=?", (target.id,)).fetchall()
+        if not rows:
+            return await m.reply(f"📚 {target.full_name} هنوز چیزی نداره.")
+        celebs = [r[0] for r in rows]
+        await send_collection_page(m.chat.id, target.id, celebs, 0, m.bot, viewer_id=m.from_user.id)
+    else:
+        user(m.from_user.id, m.from_user.full_name)
+        rows = c.execute("SELECT celeb FROM collections WHERE user_id=?", (m.from_user.id,)).fetchall()
+        if not rows:
+            return await m.reply("📚 هنوز چیزی نداری.")
+        celebs = [r[0] for r in rows]
+        await send_collection_page(m.chat.id, m.from_user.id, celebs, 0, m.bot, viewer_id=m.from_user.id)
+
+async def send_collection_page(chat_id, owner_id, celebs, page, bot, viewer_id=None):
+    name = celebs[page]
+    tier, price, spin, photo_url = CELEBS[name]
+    tier_label = {"S": "🥇 S", "A": "🥈 A", "B": "🥉 B"}[tier]
+    txt = (
+        f"📚 کالکشن — {page+1}/{len(celebs)}\n\n"
+        f"👑 {name}\n"
+        f"🏅 تیر: {tier_label}\n"
+        f"💰 ارزش: {price} سانت\n\n"
+        f"🛒 /sell {name}\n"
+        f"🏪 /list {name} [قیمت]"
+    )
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"col:{owner_id}:{page-1}"))
+    if page < len(celebs) - 1:
+        buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"col:{owner_id}:{page+1}"))
+    kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+    photo = await fetch_photo(photo_url) if photo_url else None
+    if photo:
+        await bot.send_photo(chat_id, photo, caption=txt, reply_markup=kb)
+    else:
+        await bot.send_message(chat_id, txt, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("col:"))
+async def collection_nav(q: CallbackQuery):
+    _, owner_id, page = q.data.split(":")
+    owner_id = int(owner_id)
+    page = int(page)
+    # allow anyone to browse
+    rows = c.execute("SELECT celeb FROM collections WHERE user_id=?", (owner_id,)).fetchall()
+    celebs = [r[0] for r in rows]
+    if page >= len(celebs):
+        page = len(celebs) - 1
+    name = celebs[page]
+    tier, price, spin, photo_url = CELEBS[name]
+    tier_label = {"S": "🥇 S", "A": "🥈 A", "B": "🥉 B"}[tier]
+    txt = (
+        f"📚 کالکشن — {page+1}/{len(celebs)}\n\n"
+        f"👑 {name}\n"
+        f"🏅 تیر: {tier_label}\n"
+        f"💰 ارزش: {price} سانت\n\n"
+        f"🛒 /sell {name}\n"
+        f"🏪 /list {name} [قیمت]"
+    )
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"col:{owner_id}:{page-1}"))
+    if page < len(celebs) - 1:
+        buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"col:{owner_id}:{page+1}"))
+    kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+    photo = await fetch_photo(photo_url) if photo_url else None
+    try:
+        if photo and q.message.photo:
+            await q.message.edit_media(
+                media=InputMediaPhoto(media=photo, caption=txt),
+                reply_markup=kb
+            )
+        elif q.message.photo:
+            await q.message.edit_caption(caption=txt, reply_markup=kb)
+        else:
+            await q.message.edit_text(txt, reply_markup=kb)
+    except Exception as e:
+        await q.answer(f"خطا: {e}", show_alert=True)
+        return
+    await q.answer()
+
+
+@dp.message(Command("buy"))
+async def buy(m:Message):
+    name=m.text.replace("/buy","",1).strip()
+
+    if name not in CELEBS:
+        return await m.reply("❌ سلبریتی پیدا نشد.")
+
+    tier,price,spin,photo=CELEBS[name]
+
+    user(m.from_user.id,m.from_user.full_name)
+
+    size=c.execute("SELECT size FROM users WHERE user_id=?",(m.from_user.id,)).fetchone()[0]
+
+    if size<price:
+        return await m.reply("💸 سانت کافی نداری!")
+
+    tier_key = CELEBS[name][0]
+
+    # check if user already owns it
+    user_owned = c.execute("SELECT 1 FROM collections WHERE user_id=? AND celeb=?", (m.from_user.id, name)).fetchone()
+    if user_owned:
+        return await m.reply("📚 این سلبریتی رو داری!")
+
+    # tier S and A are exclusive — check if anyone owns it (locked or not)
+    # tier B is only exclusive if locked
+    if tier_key in ("S", "A"):
+        owned = c.execute("SELECT user_id FROM collections WHERE celeb=?", (name,)).fetchone()
+        if owned:
+            owner_name = c.execute("SELECT name FROM users WHERE user_id=?", (owned[0],)).fetchone()[0]
+            return await m.reply(f"❌ این سلبریتی قبلاً توسط {owner_name} خریداری شده!")
+    else:
+        # tier B — only block if locked
+        locked = c.execute("SELECT user_id FROM collections WHERE celeb=? AND locked=1", (name,)).fetchone()
+        if locked:
+            owner_name = c.execute("SELECT name FROM users WHERE user_id=?", (locked[0],)).fetchone()[0]
+            return await m.reply(f"🔒 این سلبریتی توسط {owner_name} قفل شده!")
+
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?",(price,m.from_user.id))
+    c.execute("INSERT INTO collections(user_id,celeb,paid_price) VALUES(?,?,?)",(m.from_user.id,name,price))
+    db.commit()
+
+    photo = await fetch_photo(photo) if photo else None
+    if photo:
+        await m.bot.send_photo(m.chat.id, photo, caption=f"🎉 خرید موفق!\n\n👑 {name}")
+    else:
+        await m.reply(f"🎉 خرید موفق!\n\n👑 {name}")
+
+@dp.message(Command("spin"))
+async def spin(m:Message):
+    try:
+        tier=m.text.split()[1].upper()
+    except:
+        return await m.reply("استفاده: /spin s | a | b")
+
+    prices={"S":150,"A":100,"B":50}
+
+    if tier not in prices:
+        return await m.reply("Tier باید s یا a یا b باشد.")
+
+    cost=prices[tier]
+
+    user(m.from_user.id,m.from_user.full_name)
+
+    size=c.execute("SELECT size FROM users WHERE user_id=?",(m.from_user.id,)).fetchone()[0]
+
+    if size<cost:
+        return await m.reply("💸 سانت کافی نداری!")
+
+    pool=[n for n,v in CELEBS.items() if v[0]==tier]
+    celeb=random.choice(pool)
+
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?",(cost,m.from_user.id))
+
+    spin_tier = CELEBS[celeb][0]
+    user_owned = c.execute("SELECT 1 FROM collections WHERE user_id=? AND celeb=?", (m.from_user.id, celeb)).fetchone()
+    if user_owned:
+        c.execute("UPDATE users SET size=size+? WHERE user_id=?",(cost,m.from_user.id))
+        db.commit()
+        return await m.reply(f"🔄 این سلبریتی رو قبلاً داری!\n\n👑 {celeb}\n💰 {cost} سانت برگشت داده شد.")
+
+    if spin_tier in ("S", "A"):
+        owned = c.execute("SELECT user_id FROM collections WHERE celeb=?", (celeb,)).fetchone()
+        if owned:
+            c.execute("UPDATE users SET size=size+? WHERE user_id=?",(cost,m.from_user.id))
+            db.commit()
+            owner_name=c.execute("SELECT name FROM users WHERE user_id=?",(owned[0],)).fetchone()[0]
+            return await m.reply(f"🔄 این سلبریتی قبلاً توسط {owner_name} خریداری شده!\n\n👑 {celeb}\n💰 {cost} سانت برگشت داده شد.")
+    else:
+        locked = c.execute("SELECT user_id FROM collections WHERE celeb=? AND locked=1", (celeb,)).fetchone()
+        if locked:
+            c.execute("UPDATE users SET size=size+? WHERE user_id=?",(cost,m.from_user.id))
+            db.commit()
+            owner_name=c.execute("SELECT name FROM users WHERE user_id=?",(locked[0],)).fetchone()[0]
+            return await m.reply(f"🔒 این سلبریتی توسط {owner_name} قفل شده!\n\n👑 {celeb}\n💰 {cost} سانت برگشت داده شد.")
+
+    c.execute(
+        "INSERT INTO collections(user_id,celeb,paid_price) VALUES(?,?,?)",
+        (m.from_user.id,celeb,cost//2)
+    )
+    db.commit()
+
+    photo_url=CELEBS[celeb][3]
+    photo = await fetch_photo(photo_url) if photo_url else None
+    if photo:
+        await m.bot.send_photo(m.chat.id, photo, caption=f"🎰 اسپین موفق!\n\n👑 {celeb}")
+    else:
+        await m.reply(f"🎰 اسپین موفق!\n\n👑 {celeb}")
+
+@dp.message(Command("collectors"))
+async def collectors(m:Message):
+    rows=c.execute("""
+        SELECT users.name,COUNT(collections.celeb) AS total
+        FROM users
+        LEFT JOIN collections
+        ON users.user_id=collections.user_id
+        GROUP BY users.user_id
+        ORDER BY total DESC
+        LIMIT 10
+    """).fetchall()
+
+    txt="🏆 بهترین کلکسیونرها\n\n"
+
+    for i,(name,total) in enumerate(rows,1):
+        txt+=f"{i}. {name} — {total} سلبریتی\n"
+
+    await m.reply(txt)
+
+
+@dp.message(Command("list"))
+async def list_celeb(m:Message):
+    parts = m.text.split(None, 1)
+    if len(parts) < 2:
+        return await m.reply("Usage: /list [نام] [قیمت]\nمثال: /list Kylie Jenner 500")
+    try:
+        rest = parts[1].rsplit(None, 1)
+        name = rest[0].strip()
+        price = int(rest[1])
+    except:
+        return await m.reply("Usage: /list [نام] [قیمت]\nمثال: /list Kylie Jenner 500")
+    if name not in CELEBS:
+        return await m.reply("❌ سلبریتی پیدا نشد.")
+    user(m.from_user.id, m.from_user.full_name)
+    owned = c.execute("SELECT 1 FROM collections WHERE user_id=? AND celeb=?", (m.from_user.id, name)).fetchone()
+    if not owned:
+        return await m.reply("❌ این سلبریتی رو نداری!")
+    # cancel any previous listing for this celeb
+    c.execute("UPDATE listings SET active=0 WHERE seller_id=? AND celeb=?", (m.from_user.id, name))
+    cur = c.execute("INSERT INTO listings(seller_id, celeb, price) VALUES(?,?,?)", (m.from_user.id, name, price))
+    db.commit()
+    lid = cur.lastrowid
+    tier, orig_price, spin, photo_url = CELEBS[name]
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"🛒 خرید به قیمت {price} سانت", callback_data=f"buyoff:{lid}")
+    ]])
+    caption = (
+        f"🏪 فروش سلبریتی!\n\n"
+        f"👑 {name}\n"
+        f"💰 قیمت: {price} سانت\n"
+        f"👤 فروشنده: {m.from_user.full_name}"
+    )
+    photo = await fetch_photo(photo_url) if photo_url else None
+    if photo:
+        await m.bot.send_photo(m.chat.id, photo, caption=caption, reply_markup=kb)
+    else:
+        await m.reply(caption, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("buyoff:"))
+async def buyoff(q: CallbackQuery):
+    lid = int(q.data.split(":")[1])
+    row = c.execute("SELECT seller_id, celeb, price, active FROM listings WHERE id=?", (lid,)).fetchone()
+    if not row or row[3] == 0:
+        return await q.answer("❌ این آگهی دیگه فعال نیست!", show_alert=True)
+    seller_id, name, price, _ = row
+    buyer_id = q.from_user.id
+    if buyer_id == seller_id:
+        return await q.answer("❌ نمیتونی از خودت بخری!", show_alert=True)
+    user(buyer_id, q.from_user.full_name)
+    buyer_size = c.execute("SELECT size FROM users WHERE user_id=?", (buyer_id,)).fetchone()[0]
+    if buyer_size < price:
+        return await q.answer("❌ سانت کافی نداری!", show_alert=True)
+    # transfer
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?", (price, buyer_id))
+    c.execute("UPDATE users SET size=size+? WHERE user_id=?", (price, seller_id))
+    c.execute("DELETE FROM collections WHERE user_id=? AND celeb=?", (seller_id, name))
+    c.execute("INSERT INTO collections(user_id, celeb) VALUES(?,?)", (buyer_id, name))
+    c.execute("UPDATE listings SET active=0 WHERE id=?", (lid,))
+    db.commit()
+    seller_name = c.execute("SELECT name FROM users WHERE user_id=?", (seller_id,)).fetchone()[0]
+    await q.message.edit_caption(
+        caption=(
+            f"✅ معامله انجام شد!\n\n"
+            f"👑 {name}\n"
+            f"💰 قیمت: {price} سانت\n"
+            f"🛒 خریدار: {q.from_user.full_name}\n"
+            f"💸 فروشنده: {seller_name}"
+        )
+    )
+    await q.answer("✅ خرید موفق!")
+
+@dp.message(Command("sell"))
+async def sell(m:Message):
+    name=m.text.replace("/sell","",1).strip()
+    if name not in CELEBS:
+        return await m.reply("❌ سلبریتی پیدا نشد.")
+    user(m.from_user.id,m.from_user.full_name)
+    owned=c.execute(
+        "SELECT paid_price FROM collections WHERE user_id=? AND celeb=?",
+        (m.from_user.id,name)
+    ).fetchone()
+    if not owned:
+        return await m.reply("❌ این سلبریتی رو نداری!")
+    paid=owned[0]
+    c.execute("DELETE FROM collections WHERE user_id=? AND celeb=?",(m.from_user.id,name))
+    c.execute("UPDATE users SET size=size+? WHERE user_id=?",(paid,m.from_user.id))
+    db.commit()
+    await m.reply(f"💸 فروش موفق!\n\n👑 {name}\n💰 {paid} سانت به حسابت اضافه شد!")
+
+@dp.message(Command("lock"))
+async def lock_celeb(m:Message):
+    name = m.text.replace("/lock","",1).strip()
+    if name not in CELEBS:
+        return await m.reply("❌ سلبریتی پیدا نشد.")
+    tier_key = CELEBS[name][0]
+    if tier_key != "B":
+        return await m.reply("❌ فقط سلبریتی‌های Tier B نیاز به قفل دارن!")
+    user(m.from_user.id, m.from_user.full_name)
+    owned = c.execute("SELECT locked FROM collections WHERE user_id=? AND celeb=?", (m.from_user.id, name)).fetchone()
+    if not owned:
+        return await m.reply("❌ این سلبریتی رو نداری!")
+    if owned[0] == 1:
+        return await m.reply("🔒 این سلبریتی قبلاً قفله!")
+    size = c.execute("SELECT size FROM users WHERE user_id=?", (m.from_user.id,)).fetchone()[0]
+    if size < 25:
+        return await m.reply("❌ برای قفل کردن به ۲۵ سانت نیاز داری!")
+    c.execute("UPDATE users SET size=size-25 WHERE user_id=?", (m.from_user.id,))
+    c.execute("UPDATE collections SET locked=1 WHERE user_id=? AND celeb=?", (m.from_user.id, name))
+    db.commit()
+    await m.reply(f"🔒 {name} قفل شد!\n\n💰 ۲۵ سانت کسر شد.\nحالا کسی دیگه نمیتونه این سلبریتی رو بخره.")
+
+@dp.message(Command("gloan"))
+async def gloan(m:Message):
+    try:
+        amt = int(m.text.split()[1])
+    except:
+        return await m.reply("Usage: /gloan [مقدار]\nمثال: /gloan 50")
+    if amt < 1 or amt > 100:
+        return await m.reply("❌ حداکثر وام از بازی 100 سانته!")
+    user(m.from_user.id, m.from_user.full_name)
+    existing = c.execute("SELECT amount, due_time FROM game_loans WHERE user_id=?", (m.from_user.id,)).fetchone()
+    if existing:
+        due = existing[1]
+        rem = (due - int(time.time())) // 3600
+        return await m.reply(f"❌ قبلاً {existing[0]} سانت وام داری!\n⏳ {rem} ساعت تا موعد پرداخت")
+    due_time = int(time.time()) + 24*60*60
+    c.execute("INSERT OR REPLACE INTO game_loans(user_id, amount, due_time) VALUES(?,?,?)", (m.from_user.id, amt, due_time))
+    c.execute("UPDATE users SET size=size+? WHERE user_id=?", (amt, m.from_user.id))
+    db.commit()
+    await m.reply(
+        f"💰 وام از بازی\n\n"
+        f"💵 مقدار: {amt} سانت\n"
+        f"⏳ مهلت پرداخت: ۲۴ ساعت\n\n"
+        f"برای پرداخت: /gpay {amt}"
+    )
+
+@dp.message(Command("gpay"))
+async def gpay(m:Message):
+    user(m.from_user.id, m.from_user.full_name)
+    loan = c.execute("SELECT amount, due_time FROM game_loans WHERE user_id=?", (m.from_user.id,)).fetchone()
+    if not loan:
+        return await m.reply("❌ وامی نداری!")
+    amt, due_time = loan
+    size = c.execute("SELECT size FROM users WHERE user_id=?", (m.from_user.id,)).fetchone()[0]
+    if size < amt:
+        return await m.reply(f"❌ سانت کافی نداری! باید {amt} سانت داشته باشی.")
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?", (amt, m.from_user.id))
+    c.execute("DELETE FROM game_loans WHERE user_id=?", (m.from_user.id,))
+    db.commit()
+    await m.reply(f"✅ وام {amt} سانت پرداخت شد!")
+
+async def check_loans(bot):
+    while True:
+        await asyncio.sleep(60)
+        now = int(time.time())
+        overdue = c.execute("SELECT user_id, amount FROM game_loans WHERE due_time<?", (now,)).fetchall()
+        for uid, amt in overdue:
+            size = c.execute("SELECT size FROM users WHERE user_id=?", (uid,)).fetchone()
+            if not size:
+                continue
+            size = size[0]
+            paid = 0
+            msg = f"⚠️ وام {amt} سانت موعدش گذشت!\n\n"
+            # sell celebs to cover debt
+            if size < amt:
+                celebs = c.execute("SELECT celeb, paid_price FROM collections WHERE user_id=? ORDER BY paid_price DESC", (uid,)).fetchall()
+                for celeb, paid_price in celebs:
+                    if paid >= amt:
+                        break
+                    c.execute("DELETE FROM collections WHERE user_id=? AND celeb=?", (uid, celeb))
+                    c.execute("UPDATE users SET size=size+? WHERE user_id=?", (paid_price, uid))
+                    paid += paid_price
+                    msg += f"💸 {celeb} فروخته شد (+{paid_price} سانت)\n"
+                db.commit()
+                size = c.execute("SELECT size FROM users WHERE user_id=?", (uid,)).fetchone()[0]
+            # deduct what we can
+            deduct = min(amt, size)
+            c.execute("UPDATE users SET size=size-? WHERE user_id=?", (deduct, uid))
+            remaining = amt - deduct
+            if remaining > 0:
+                c.execute("UPDATE users SET size=size-? WHERE user_id=?", (remaining, uid))
+                msg += f"📉 {remaining} سانت بدهی — حساب منفی شد!"
+            else:
+                msg += f"✅ {amt} سانت کسر شد."
+            c.execute("DELETE FROM game_loans WHERE user_id=?", (uid,))
+            db.commit()
+            try:
+                await bot.send_message(uid, msg)
+            except:
+                pass
+
+@dp.message(Command("addcm"))
+async def addcm(m:Message):
+    if m.from_user.id != ADMIN_ID:
+        return await m.reply("❌ دسترسی ندارید!")
+    try:
+        parts = m.text.split()
+        amount = int(parts[1])
+    except:
+        return await m.reply("Usage: /addcm [amount] (reply to a user)")
+    if not m.reply_to_message:
+        return await m.reply("Reply to a user to add cm.")
+    target = m.reply_to_message.from_user.id
+    user(target, m.reply_to_message.from_user.full_name)
+    c.execute("UPDATE users SET size=size+? WHERE user_id=?", (amount, target))
+    db.commit()
+    new_size = c.execute("SELECT size FROM users WHERE user_id=?", (target,)).fetchone()[0]
+    await m.reply(f"✅ {amount} سانت به {m.reply_to_message.from_user.full_name} اضافه شد!\n📏 اندازه جدید: {new_size} سانت")
+
+
+@dp.message(Command("addcb"))
+async def addcb(m:Message):
+    if m.from_user.id != ADMIN_ID:
+        return await m.reply("❌ دسترسی ندارید!")
+    name = m.text.replace("/addcb","",1).strip()
+    if not name:
+        return await m.reply("Usage: /addcb [نام سلبریتی] (reply to a user)\nمثال: /addcb Dua Lipa")
+    if name not in CELEBS:
+        return await m.reply("❌ سلبریتی پیدا نشد.")
+    if not m.reply_to_message:
+        return await m.reply("Reply to a user to give the celeb.")
+    target = m.reply_to_message.from_user.id
+    user(target, m.reply_to_message.from_user.full_name)
+    already = c.execute("SELECT 1 FROM collections WHERE user_id=? AND celeb=?", (target, name)).fetchone()
+    if already:
+        return await m.reply(f"❌ {m.reply_to_message.from_user.full_name} این سلبریتی رو داره!")
+    tier, price, spin, photo = CELEBS[name]
+    c.execute("INSERT INTO collections(user_id,celeb,paid_price,locked) VALUES(?,?,?,0)", (target, name, price))
+    db.commit()
+    await m.reply(f"✅ {name} به {m.reply_to_message.from_user.full_name} داده شد!\n👑 Tier {tier}")
+
+async def main():
+    bot=Bot(TOKEN)
+    from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeDefault
+    commands = [
+        BotCommand(command="grow", description="🌱 رشد کن"),
+        BotCommand(command="size", description="📊 اندازه و پروفایل"),
+        BotCommand(command="top", description="🏆 جدول بزرگان"),
+        BotCommand(command="market", description="🛒 بازار سلبریتی"),
+        BotCommand(command="collection", description="📚 کالکشن من"),
+        BotCommand(command="spin", description="🎰 اسپین سلبریتی"),
+        BotCommand(command="buy", description="🛍 خرید سلبریتی"),
+        BotCommand(command="sell", description="💸 فروش سلبریتی"),
+        BotCommand(command="list", description="🏪 فروش به دیگران"),
+        BotCommand(command="pvp", description="⚔️ دوئل"),
+        BotCommand(command="loan", description="💰 وام دادن"),
+        BotCommand(command="repay", description="✅ پرداخت بدهی"),
+        BotCommand(command="collectors", description="🏆 بهترین کلکسیونرها"),
+    ]
+    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+    await bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+    asyncio.create_task(check_loans(bot))
+    await dp.start_polling(bot)
+
+if __name__=="__main__":
+    import asyncio
+    asyncio.run(main())
