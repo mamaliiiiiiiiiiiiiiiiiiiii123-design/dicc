@@ -149,6 +149,134 @@ async def accept(q:CallbackQuery):
     await q.message.edit_text(f"🏆 پایان دوئل!\n\n👑 برنده: {winner_name}\n💰 جایزه: {bet} سانت\n\n😂 بازنده باید بیشتر تمرین کنه!")
 
 
+# ===== Mafia Team PvP System =====
+c.execute("CREATE TABLE IF NOT EXISTS mafia_battles(id INTEGER PRIMARY KEY AUTOINCREMENT,creator INTEGER,opponent INTEGER,bet INTEGER,active INTEGER DEFAULT 1,chat_id INTEGER)")
+c.execute("CREATE TABLE IF NOT EXISTS mafia_members(battle_id INTEGER,user_id INTEGER,name TEXT,team INTEGER)")
+db.commit()
+
+def mafia_counts(bid):
+    t1=c.execute("SELECT COUNT(*) FROM mafia_members WHERE battle_id=? AND team=1",(bid,)).fetchone()[0]
+    t2=c.execute("SELECT COUNT(*) FROM mafia_members WHERE battle_id=? AND team=2",(bid,)).fetchone()[0]
+    return t1,t2
+
+def mafia_board(bid,creator_name,opp_name,bet,status="🔫 جنگ مافیا شروع شد!"):
+    t1,t2=mafia_counts(bid)
+    return (
+        f"{status}\n\n"
+        f"🔴 تیم {creator_name}  در مقابل  🔵 تیم {opp_name}\n"
+        f"💰 ورودی هر نفر: {bet} سانت\n\n"
+        f"هر کی میخواد وارد بشه دکمه تیمش رو بزنه (مخفیانه ثبت میشه، تیم‌بندی معلوم نیست)!\n"
+        f"👥 تعداد شرکت‌کننده‌ها: {t1+t2}\n\n"
+        f"وقتی آماده بودید، سازنده یا حریف دکمه «شروع نبرد» رو بزنه."
+    )
+
+@dp.message(Command("mafia"))
+async def mafia_start(m:Message):
+    if not m.reply_to_message:
+        return await m.reply("⚠️ روی پیام حریف ریپلای کن و بنویس /mafia [مبلغ]\nمثال: /mafia 5")
+    try:
+        bet=int(m.text.split()[1])
+    except:
+        return await m.reply("⚠️ استفاده: /mafia [مبلغ]\nمثال: /mafia 5")
+    if bet<=0:
+        return await m.reply("❌ مبلغ باید مثبت باشه!")
+    creator=m.from_user.id
+    opponent=m.reply_to_message.from_user.id
+    if creator==opponent:
+        return await m.reply("❌ نمیتونی با خودت مافیا بازی کنی!")
+    if m.reply_to_message.from_user.is_bot:
+        return await m.reply("❌ نمیتونی با بات مافیا بازی کنی!")
+    user(creator,m.from_user.full_name)
+    user(opponent,m.reply_to_message.from_user.full_name)
+    s=c.execute("SELECT size FROM users WHERE user_id=?",(creator,)).fetchone()[0]
+    if s<bet:
+        return await m.reply("❌ سانت کافی نداری!")
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?",(bet,creator))
+    cur=c.execute("INSERT INTO mafia_battles(creator,opponent,bet,chat_id) VALUES(?,?,?,?)",(creator,opponent,bet,m.chat.id))
+    db.commit()
+    bid=cur.lastrowid
+    c.execute("INSERT INTO mafia_members(battle_id,user_id,name,team) VALUES(?,?,?,1)",(bid,creator,m.from_user.full_name))
+    db.commit()
+    kb=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔴 تیم {m.from_user.full_name}",callback_data=f"mjoin:{bid}:1"),
+         InlineKeyboardButton(text=f"🔵 تیم {m.reply_to_message.from_user.full_name}",callback_data=f"mjoin:{bid}:2")],
+        [InlineKeyboardButton(text="🏁 شروع نبرد و شمارش",callback_data=f"mstart:{bid}")]
+    ])
+    await m.reply(
+        mafia_board(bid,m.from_user.full_name,m.reply_to_message.from_user.full_name,bet),
+        reply_markup=kb
+    )
+
+@dp.callback_query(F.data.startswith("mjoin:"))
+async def mafia_join(q:CallbackQuery):
+    _,bid,team=q.data.split(":")
+    bid=int(bid); team=int(team)
+    row=c.execute("SELECT creator,opponent,bet,active FROM mafia_battles WHERE id=?",(bid,)).fetchone()
+    if not row or row[3]==0:
+        return await q.answer("⚠️ این نبرد تموم شده!",show_alert=True)
+    creator,opponent,bet,_=row
+    uid=q.from_user.id
+    already=c.execute("SELECT team FROM mafia_members WHERE battle_id=? AND user_id=?",(bid,uid)).fetchone()
+    if already:
+        return await q.answer("⚠️ قبلاً مخفیانه وارد یه تیم شدی!",show_alert=True)
+    user(uid,q.from_user.full_name)
+    s=c.execute("SELECT size FROM users WHERE user_id=?",(uid,)).fetchone()[0]
+    if s<bet:
+        return await q.answer("❌ سانت کافی نداری!",show_alert=True)
+    c.execute("UPDATE users SET size=size-? WHERE user_id=?",(bet,uid))
+    c.execute("INSERT INTO mafia_members(battle_id,user_id,name,team) VALUES(?,?,?,?)",(bid,uid,q.from_user.full_name,team))
+    db.commit()
+    creator_name=c.execute("SELECT name FROM users WHERE user_id=?",(creator,)).fetchone()[0]
+    opp_name=c.execute("SELECT name FROM users WHERE user_id=?",(opponent,)).fetchone()[0]
+    await q.answer("✅ مخفیانه وارد تیم شدی!")
+    try:
+        await q.message.edit_text(
+            mafia_board(bid,creator_name,opp_name,bet),
+            reply_markup=q.message.reply_markup
+        )
+    except:
+        pass
+
+@dp.callback_query(F.data.startswith("mstart:"))
+async def mafia_resolve(q:CallbackQuery):
+    bid=int(q.data.split(":")[1])
+    row=c.execute("SELECT creator,opponent,bet,active FROM mafia_battles WHERE id=?",(bid,)).fetchone()
+    if not row or row[3]==0:
+        return await q.answer("⚠️ این نبرد تموم شده!",show_alert=True)
+    creator,opponent,bet,_=row
+    if q.from_user.id not in (creator,opponent):
+        return await q.answer("⚠️ فقط سازنده یا حریف میتونه نبرد رو شروع کنه!",show_alert=True)
+    members=c.execute("SELECT user_id,name,team FROM mafia_members WHERE battle_id=?",(bid,)).fetchall()
+    team1=[(u,n) for u,n,t in members if t==1]
+    team2=[(u,n) for u,n,t in members if t==2]
+    tie=len(team1)==len(team2)
+    if len(team1)>len(team2):
+        winners,losers,wteam=team1,team2,1
+    elif len(team2)>len(team1):
+        winners,losers,wteam=team2,team1,2
+    else:
+        wteam=random.choice([1,2])
+        winners,losers=(team1,team2) if wteam==1 else (team2,team1)
+    total_pot=bet*len(members)
+    share=total_pot//len(winners) if winners else 0
+    for uid,_ in winners:
+        c.execute("UPDATE users SET size=size+? WHERE user_id=?",(share,uid))
+    c.execute("UPDATE mafia_battles SET active=0 WHERE id=?",(bid,))
+    db.commit()
+    win_names="، ".join(n for _,n in winners) or "-"
+    lose_names="، ".join(n for _,n in losers) or "-"
+    color="🔴" if wteam==1 else "🔵"
+    await q.message.edit_text(
+        f"🔫 پایان جنگ مافیا!\n\n"
+        f"{color} تیم برنده ({len(winners)} نفر): {win_names}\n"
+        f"💀 تیم بازنده ({len(losers)} نفر): {lose_names}\n\n"
+        f"💰 کل جایزه: {total_pot} سانت\n"
+        f"🎁 سهم هر برنده: {share} سانت\n\n"
+        f"{'😂 مساوی بودن، شانس تصمیم گرفت!' if tie else '👑 تیم بزرگتر برد!'}"
+    )
+    await q.answer("🏁 نبرد تموم شد!")
+
+
 # ===== Celebrity Collection System =====
 c.execute("CREATE TABLE IF NOT EXISTS collections(user_id INTEGER, celeb TEXT, paid_price INTEGER DEFAULT 0, locked INTEGER DEFAULT 0)")
 db.commit()
@@ -724,6 +852,7 @@ async def main():
         BotCommand(command="sell", description="💸 فروش سلبریتی"),
         BotCommand(command="list", description="🏪 فروش به دیگران"),
         BotCommand(command="pvp", description="⚔️ دوئل"),
+        BotCommand(command="mafia", description="🔫 جنگ مافیا تیمی"),
         BotCommand(command="loan", description="💰 وام دادن"),
         BotCommand(command="repay", description="✅ پرداخت بدهی"),
         BotCommand(command="collectors", description="🏆 بهترین کلکسیونرها"),
