@@ -394,17 +394,15 @@ async def mafia2_resolve(q:CallbackQuery):
     db.commit()
     creator_name=c.execute("SELECT name FROM users WHERE user_id=?",(creator,)).fetchone()[0]
     opp_name=c.execute("SELECT name FROM users WHERE user_id=?",(opponent,)).fetchone()[0]
-    team1_names="، ".join(n for _,n in team1) or "-"
-    team2_names="، ".join(n for _,n in team2) or "-"
     win_label=f"🔴 تیم {creator_name}" if wteam==1 else f"🔵 تیم {opp_name}"
     await q.message.edit_text(
         f"🔫 پایان جنگ مافیا!\n\n"
-        f"🔴 تیم {creator_name} ({len(team1)} نفر): {team1_names}\n"
-        f"🔵 تیم {opp_name} ({len(team2)} نفر): {team2_names}\n\n"
-        f"👑 برنده: {win_label}\n"
+        f"👥 مجموع شرکت‌کننده‌ها: {len(members)} نفر\n\n"
+        f"👑 برنده: {win_label} ({len(winners)} نفر)\n"
         f"💰 کل جایزه: {total_pot} سانت\n"
         f"🎁 سهم هر برنده: {share} سانت\n\n"
-        f"{'😂 مساوی بودن، شانس تصمیم گرفت!' if tie else '👑 تیم بزرگتر برد!'}"
+        f"{'😂 مساوی بودن، شانس تصمیم گرفت!' if tie else '👑 تیم بزرگتر برد!'}\n\n"
+        f"🤫 اینکه کی تو کدوم تیم بود مخفی می‌مونه!"
     )
     await q.answer("🏁 نبرد تموم شد!")
 
