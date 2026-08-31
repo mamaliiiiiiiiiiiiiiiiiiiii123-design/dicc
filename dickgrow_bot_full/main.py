@@ -1,3 +1,4 @@
+
 import os, sqlite3, random, time
 import aiohttp
 from aiogram import Bot, Dispatcher, F
@@ -412,9 +413,8 @@ db.commit()
 
 
 CELEBS = {
-    "Ana de Armas": ("S",300,150,"AgACAgQAAxkBAAEiK8tqlX0p5xvvc7RkL8yCDK50C70cMAAC3hBrG4IDsFBEhOBKjPVnEgEAAwIAA3MAAz0E"),
-    "Kylie Jenner": ("S",300,150,"https://i.postimg.cc/HkKppcty/download-(5).jpg"),
-    "Sydney Sweeney": ("S",300,150,"https://i.postimg.cc/4NxZVbLF/download-(6).jpg"),
+    "Angela White": ("PH",300,150,"https://i.postimg.cc/JzdhGdRj/download-(4).jpg"),
+    "Sydney Sweeney": ("PH",300,150,"https://i.postimg.cc/4NxZVbLF/download-(6).jpg"),
     "Olivia Cooke": ("A",200,100,"https://i.postimg.cc/G3kJGv8k/olivia-cooke-in-the-girlfriend.jpg"),
     "Scarlett Johansson": ("A",200,100,"https://i.postimg.cc/rmT2mSRG/download-(7).jpg"),
     "Sabrina Carpenter": ("A",200,100,"https://i.postimg.cc/4dPqxjgJ/Sabrina-Carpenter.jpg"),
@@ -441,11 +441,13 @@ CELEBS = {
 
 
 TIER_CELEBS = {
+    "PH": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "PH"],
     "S": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "S"],
     "A": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "A"],
     "B": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "B"],
 }
 TIER_LABELS = {
+    "PH": "🥇 Tier PH",
     "S": "🥇 Tier S",
     "A": "🥈 Tier A",
     "B": "🥉 Tier B",
@@ -517,6 +519,8 @@ def cache_photo(url: str, sent_message):
 
 @dp.message(Command("getfileid"))
 async def get_file_id(m: Message):
+    if m.from_user.id != ADMIN_ID:
+        return
     target = m.reply_to_message.photo[-1] if (m.reply_to_message and m.reply_to_message.photo) else (m.photo[-1] if m.photo else None)
     if not target:
         return await m.reply("⚠️ یه عکس بفرست (یا روی یه عکس ریپلای بزن) و /getfileid رو بنویس.")
