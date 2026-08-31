@@ -412,7 +412,7 @@ db.commit()
 
 
 CELEBS = {
-    "Ana de Armas": ("S",300,150,"https://i.postimg.cc/JzdhGdRj/download-(4).jpg"),
+    "Ana de Armas": ("S",300,150,"AgACAgQAAxkBAAEiK8tqlX0p5xvvc7RkL8yCDK50C70cMAAC3hBrG4IDsFBEhOBKjPVnEgEAAwIAA3MAAz0E"),
     "Kylie Jenner": ("S",300,150,"https://i.postimg.cc/HkKppcty/download-(5).jpg"),
     "Sydney Sweeney": ("S",300,150,"https://i.postimg.cc/4NxZVbLF/download-(6).jpg"),
     "Olivia Cooke": ("A",200,100,"https://i.postimg.cc/G3kJGv8k/olivia-cooke-in-the-girlfriend.jpg"),
