@@ -490,14 +490,51 @@ async def fetch_photo(url: str) -> BufferedInputFile | None:
         pass
     return None
 
+# ===== Telegram file_id photo cache (avoid re-downloading/re-uploading every time) =====
+c.execute("CREATE TABLE IF NOT EXISTS photo_cache(url TEXT PRIMARY KEY, file_id TEXT)")
+db.commit()
+
+async def resolve_photo(url: str):
+    """Accepts either a Telegram file_id (used directly, zero download) or an http(s) URL
+    (downloaded once, then cached as a file_id from then on)."""
+    if not url:
+        return None
+    if not url.startswith("http://") and not url.startswith("https://"):
+        # Already a Telegram file_id — use it straight away, nothing to download.
+        return url
+    row = c.execute("SELECT file_id FROM photo_cache WHERE url=?", (url,)).fetchone()
+    if row:
+        return row[0]
+    return await fetch_photo(url)
+
+def cache_photo(url: str, sent_message):
+    """Call after successfully sending/editing a photo that was NOT already cached, to store its file_id."""
+    try:
+        if sent_message and sent_message.photo:
+            c.execute("INSERT OR REPLACE INTO photo_cache(url,file_id) VALUES(?,?)", (url, sent_message.photo[-1].file_id))
+            db.commit()
+    except Exception:
+        pass
+
+@dp.message(Command("getfileid"))
+async def get_file_id(m: Message):
+    if m.from_user.id != ADMIN_ID:
+        return
+    target = m.reply_to_message.photo[-1] if (m.reply_to_message and m.reply_to_message.photo) else (m.photo[-1] if m.photo else None)
+    if not target:
+        return await m.reply("⚠️ یه عکس بفرست (یا روی یه عکس ریپلای بزن) و /getfileid رو بنویس.")
+    await m.reply(f"🆔 file_id:\n`{target.file_id}`", parse_mode="Markdown")
+
 @dp.message(Command("market"))
 async def market(m:Message):
     for tier in ["S", "A", "B"]:
         txt, photo_url = build_market_caption(tier, 0)
         kb = build_market_kb(tier, 0)
-        photo = await fetch_photo(photo_url) if photo_url else None
+        photo = await resolve_photo(photo_url) if photo_url else None
         if photo:
-            await m.bot.send_photo(m.chat.id, photo, caption=txt, reply_markup=kb)
+            sent = await m.bot.send_photo(m.chat.id, photo, caption=txt, reply_markup=kb)
+            if isinstance(photo, BufferedInputFile):
+                cache_photo(photo_url, sent)
         else:
             await m.bot.send_message(m.chat.id, txt, reply_markup=kb)
 
@@ -507,13 +544,15 @@ async def market_page_nav(q: CallbackQuery):
     page = int(page)
     txt, photo_url = build_market_caption(tier, page)
     kb = build_market_kb(tier, page)
-    photo = await fetch_photo(photo_url) if photo_url else None
+    photo = await resolve_photo(photo_url) if photo_url else None
     try:
         if photo and q.message.photo:
-            await q.message.edit_media(
+            edited = await q.message.edit_media(
                 media=InputMediaPhoto(media=photo, caption=txt),
                 reply_markup=kb
             )
+            if isinstance(photo, BufferedInputFile) and hasattr(edited, "photo"):
+                cache_photo(photo_url, edited)
         elif q.message.photo:
             await q.message.edit_caption(caption=txt, reply_markup=kb)
         else:
@@ -559,9 +598,11 @@ async def send_collection_page(chat_id, owner_id, celebs, page, bot, viewer_id=N
     if page < len(celebs) - 1:
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"col:{owner_id}:{page+1}"))
     kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
-    photo = await fetch_photo(photo_url) if photo_url else None
+    photo = await resolve_photo(photo_url) if photo_url else None
     if photo:
-        await bot.send_photo(chat_id, photo, caption=txt, reply_markup=kb)
+        sent = await bot.send_photo(chat_id, photo, caption=txt, reply_markup=kb)
+        if isinstance(photo, BufferedInputFile):
+            cache_photo(photo_url, sent)
     else:
         await bot.send_message(chat_id, txt, reply_markup=kb)
 
@@ -592,13 +633,15 @@ async def collection_nav(q: CallbackQuery):
     if page < len(celebs) - 1:
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"col:{owner_id}:{page+1}"))
     kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
-    photo = await fetch_photo(photo_url) if photo_url else None
+    photo = await resolve_photo(photo_url) if photo_url else None
     try:
         if photo and q.message.photo:
-            await q.message.edit_media(
+            edited = await q.message.edit_media(
                 media=InputMediaPhoto(media=photo, caption=txt),
                 reply_markup=kb
             )
+            if isinstance(photo, BufferedInputFile) and hasattr(edited, "photo"):
+                cache_photo(photo_url, edited)
         elif q.message.photo:
             await q.message.edit_caption(caption=txt, reply_markup=kb)
         else:
@@ -650,9 +693,12 @@ async def buy(m:Message):
     c.execute("INSERT INTO collections(user_id,celeb,paid_price) VALUES(?,?,?)",(m.from_user.id,name,price))
     db.commit()
 
-    photo = await fetch_photo(photo) if photo else None
+    photo_url = photo
+    photo = await resolve_photo(photo_url) if photo_url else None
     if photo:
-        await m.bot.send_photo(m.chat.id, photo, caption=f"🎉 خرید موفق!\n\n👑 {name}")
+        sent = await m.bot.send_photo(m.chat.id, photo, caption=f"🎉 خرید موفق!\n\n👑 {name}")
+        if isinstance(photo, BufferedInputFile):
+            cache_photo(photo_url, sent)
     else:
         await m.reply(f"🎉 خرید موفق!\n\n👑 {name}")
 
@@ -711,9 +757,11 @@ async def spin(m:Message):
     db.commit()
 
     photo_url=CELEBS[celeb][3]
-    photo = await fetch_photo(photo_url) if photo_url else None
+    photo = await resolve_photo(photo_url) if photo_url else None
     if photo:
-        await m.bot.send_photo(m.chat.id, photo, caption=f"🎰 اسپین موفق!\n\n👑 {celeb}")
+        sent = await m.bot.send_photo(m.chat.id, photo, caption=f"🎰 اسپین موفق!\n\n👑 {celeb}")
+        if isinstance(photo, BufferedInputFile):
+            cache_photo(photo_url, sent)
     else:
         await m.reply(f"🎰 اسپین موفق!\n\n👑 {celeb}")
 
@@ -769,9 +817,11 @@ async def list_celeb(m:Message):
         f"💰 قیمت: {price} سانت\n"
         f"👤 فروشنده: {m.from_user.full_name}"
     )
-    photo = await fetch_photo(photo_url) if photo_url else None
+    photo = await resolve_photo(photo_url) if photo_url else None
     if photo:
-        await m.bot.send_photo(m.chat.id, photo, caption=caption, reply_markup=kb)
+        sent = await m.bot.send_photo(m.chat.id, photo, caption=caption, reply_markup=kb)
+        if isinstance(photo, BufferedInputFile):
+            cache_photo(photo_url, sent)
     else:
         await m.reply(caption, reply_markup=kb)
 
