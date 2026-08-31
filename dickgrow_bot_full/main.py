@@ -1,4 +1,3 @@
-
 import os, sqlite3, random, time
 import aiohttp
 from aiogram import Bot, Dispatcher, F
@@ -518,8 +517,6 @@ def cache_photo(url: str, sent_message):
 
 @dp.message(Command("getfileid"))
 async def get_file_id(m: Message):
-    if m.from_user.id != ADMIN_ID:
-        return
     target = m.reply_to_message.photo[-1] if (m.reply_to_message and m.reply_to_message.photo) else (m.photo[-1] if m.photo else None)
     if not target:
         return await m.reply("⚠️ یه عکس بفرست (یا روی یه عکس ریپلای بزن) و /getfileid رو بنویس.")
