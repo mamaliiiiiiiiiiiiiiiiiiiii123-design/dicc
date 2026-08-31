@@ -1,4 +1,3 @@
-
 import os, sqlite3, random, time
 import aiohttp
 from aiogram import Bot, Dispatcher, F
@@ -413,46 +412,47 @@ db.commit()
 
 
 CELEBS = {
-    "Angela White": ("PH",300,150,"https://i.postimg.cc/JzdhGdRj/download-(4).jpg"),
-    "Sydney Sweeney": ("PH",300,150,"https://i.postimg.cc/4NxZVbLF/download-(6).jpg"),
-    "Olivia Cooke": ("A",200,100,"https://i.postimg.cc/G3kJGv8k/olivia-cooke-in-the-girlfriend.jpg"),
+    "Angela White": ("PH",300,175,"AgACAgQAAxkBAAEiK8tqlX0p5xvvc7RkL8yCDK50C70cMAAC3hBrG4IDsFBEhOBKjPVnEgEAAwIAA3MAAz0E"),
+    "Comatozze": ("PH",300,175,"AgACAgQAAxkBAAEiK99qlYOdZfkvzeW8xB9yg8ay0a5E0AAC4w9rG8igqVDkAAH7iUzCMUoBAAMCAANzAAM9BA"),
+    "Sweetie Fox": ("PH",300,175,"AgACAgQAAxkBAAEiK-NqlYTmIgPdooRd2A-cfBNbZIDWDwAC5g9rG8igqVDv7lHTLO7LEgEAAwIAA3MAAz0E"),
+    "Diana Rider": ("PH",300,175,"AgACAgQAAxkBAAEiK-VqlYWbR4YN5FJHPXwtV1QcRVTuzQAC5w9rG8igqVAWEqBkFTJ6xQEAAwIAA3MAAz0E"),
+    "Lana Rhoades": ("PH",300,175,"AgACAgQAAxkBAAEiK-dqlYZjT3rDHHtNt5EPHZTb_o70xwAC6A9rG8igqVCMQM6VNiWu-wEAAwIAA3MAAz0E"),
+    "Ana de Armas": ("S",300,150,"AgACAgQAAxkBAAEiLBRqlYks3xjU5rQCkNXypUQOoS9n3QAC7w9rG8igqVAhpyUv1rvdmwEAAwIAA3MAAz0E"),
+    "Kylie Jenner": ("S",300,150,"AgACAgQAAxkBAAEiK_pqlYgZBOJKJxD9XWYbVXBorKTNhgAC7A9rG8igqVBqjMMOCf_S6QEAAwIAA3MAAz0E"),
+    "Sydney Sweeney": ("S",300,150,"AgACAgQAAxkBAAEiLDpqlYwMquyBS060NrxvsuyO1FNAJAAC8w9rG8igqVD6s_G4PAanHAEAAwIAA3MAAz0E"),
+    "Pinkchyu": ("S",300,150,"AgACAgQAAxkBAAEiLERqlY2raCIQW7DtAfu0VvHOHHmb0wAC9g9rG8igqVAAAaAFvOx8QcwBAAMCAANzAAM9BA"),
+    "Georgina Rodriguez": ("S",300,150,"AgACAgQAAxkBAAEiLEZqlY6XnHzFTpJEDpldzBMTSy2gxgAC-A9rG8igqVBu8-tHMaLjsQEAAwIAA3MAAz0E"),
+    "Madison Beer": ("S",300,150,"AgACAgQAAxkBAAEiLEhqlY9d7gjoBP04fEP7UevZ8dQB7QAC-w9rG8igqVAfR2wrEdm1BwEAAwIAA3MAAz0E"),
+    "Sadie Sink": ("A",300,150,"AgACAgQAAxkBAAEiLFJqlZEGt1mG9G15PgKP4PPhQcRm-gACARBrG8igqVCvW3ZnrKAGywEAAwIAA3MAAz0E"),
+    "Scarlett Johansson": ("A",300,150,"AgACAgQAAxkBAAEiLGFqlZGwPMq4ggZeAsQ0VekHvdJ3egACBRBrG8igqVAFoaJeMIH-cAEAAwIAA3MAAz0E"),
+    "Anne Hathaway": ("B",300,150,"AgACAgQAAxkBAAEiLHJqlZLNXRVWSN-k7xu-doS7FTDsbgACCRBrG8igqVDk8fgU3uXUFwEAAwIAA3MAAz0E"),
+    "Elizabeth Olsen": ("B",300,150,"AgACAgQAAxkBAAEiLHRqlZNem1Ue0rp7IJ182xumcv2XKwACChBrG8igqVDyu9zwySffJAEAAwIAA3MAAz0E"),
+    "Olivia Rodrigo": ("B",300,150,"AgACAgQAAxkBAAEiLHZqlZPReBV1oF2fHUcz1MiKfWTuPAACCxBrG8igqVDsVdcPA4GFUAEAAwIAA3MAAz0E"),
+    "Emma Watson": ("B",300,150,"AgACAgQAAxkBAAEiLHpqlZRQeIXIaNZcdp3gXLdrXT2anAACDRBrG8igqVC08ITVIg9XMAEAAwIAA3MAAz0E"),
+    "Kristen Stewart": ("B",300,150,"AgACAgQAAxkBAAEiLHxqlZSorrGyLnSOBdRqRqdnSvnaXgACDxBrG8igqVDQHpTLZKuoOwEAAwIAA3MAAz0E"),
+    "Olivia Cooke": ("A",200,100,"AgACAgQAAxkBAAEiLFBqlZC2pdCvovgiG6aqLJwG7oNBHAAC_w9rG8igqVC9yhxFuB9gDQEAAwIAA3MAAz0E"),
     "Scarlett Johansson": ("A",200,100,"https://i.postimg.cc/rmT2mSRG/download-(7).jpg"),
-    "Sabrina Carpenter": ("A",200,100,"https://i.postimg.cc/4dPqxjgJ/Sabrina-Carpenter.jpg"),
-    "Dua Lipa": ("A",100,50,"https://i.postimg.cc/VsM021zP/download-(8).jpg"),
-    "Anya Taylor Joy": ("B",100,50,"https://i.postimg.cc/1XF4D05F/margot-anya-taylor-joy.jpg"),
-    "Jenna Ortega": ("A",100,50,"https://i.postimg.cc/cL068nqV/jenna-ortega.jpg"),
-    "Sophie Tatcher": ("A",100,50,"https://i.postimg.cc/d0S0XNhp/1031465120909581257.jpg"),
-    "Mia Plays": ("B",100,50,"https://i.postimg.cc/GmLhpnYg/1083186147870726920.jpg"),
-    "Angelina Jolie": ("A",100,50,"https://i.postimg.cc/g05Y4w5Y/angelina-jolie-(1).jpg"),
-    "Anne Hauthway": ("B",100,50,"https://i.postimg.cc/kgY9X67D/Anne-Hathaway.jpg"),
-    "Emma Watson": ("B",100,50,"https://i.postimg.cc/kGyPrDjq/Belle.jpg"),
-    "Billie Eilish": ("S",100,50,"https://i.postimg.cc/L6NFNYYY/Billie-Eilish.jpg"),
-    "Emilia Clarke": ("B",100,50,"https://i.postimg.cc/vZkjNWQ2/download-(1).jpg"),
-    "Billie Eiliish": ("A",100,50,"https://i.postimg.cc/kGbjb56c/download-(9).jpg"),
-    "Folorance Pugh": ("B",100,50,"https://i.postimg.cc/D0NdwPp4/florence.jpg"),
-    "AZAD": ("B",100,50,"https://i.postimg.cc/k4XxNpkW/images-(1).jpg"),
-    "Elizabet Olson": ("B",100,50,"https://i.postimg.cc/MKxj14V6/Sally-Owen-icon.jpg"),
-    "Victoria Pederetti": ("B",100,50,"https://i.postimg.cc/5tFthq8y/victoria-pedretti.jpg"),
-    "Double KIIR": ("A",100,50,"https://i.postimg.cc/G38vrV1C/ssss.jpg"),
-    "Habibi": ("B",100,50,"https://i.postimg.cc/wBj6zCZN/sd.jpg"),
-    "Faghih": ("B",100,50,"https://i.postimg.cc/sXfGtH4f/sss-1.jpg"),
-    "Natalie Dyer": ("B",100,50,"https://i.postimg.cc/j5cYmL3J/this-pic.jpg"),
+    "Sabrina Carpenter": ("B",200,100,"AgACAgQAAxkBAAEiLGxqlZJxN_AeZTfMK1e_iZUiC4tvaAACBxBrG8igqVD1mfDtce21cAEAAwIAA3MAAz0E"),
+    "Dua Lipa": ("A",100,50,"AgACAgQAAxkBAAEiLIRqlZW2x2U46kRw5iGd8GMcDrH5xAACFxBrG8igqVBqy7bfQ8pbLgEAAwIAA3MAAz0E"),
+    "Sophie Tatcher": ("A",100,50,"AgACAgQAAxkBAAEiLExqlZBP5UH5p9rTTAUQ6hv3_mUpkAAC_g9rG8igqVABEzpZosgbbAEAAwIAA3MAAz0E"),
+    "Billie Eilish": ("S",100,50,"AgACAgQAAxkBAAEiK_RqlYf6cjcwPHIvFRT9A4ohI-c4UgAC6w9rG8igqVCUtEXfAAF9YyUBAAMCAANzAAM9BA"),
+    "Folorance Pugh": ("B",100,50,"AgACAgQAAxkBAAEiLH5qlZVHegJopSA9qXKzRDL9wgaQbwACFRBrG8igqVDC4D69BeL3nwEAAwIAA3MAAz0E"),
 }
 
 
 TIER_CELEBS = {
-    "PH": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "PH"],
     "S": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "S"],
     "A": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "A"],
     "B": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "B"],
+    "PH": [(n, v[1], v[3]) for n, v in CELEBS.items() if v[0] == "PH"],
 }
 TIER_LABELS = {
-    "PH": "🥇 Tier PH",
     "S": "🥇 Tier S",
     "A": "🥈 Tier A",
     "B": "🥉 Tier B",
+    "PH": "💎 Tier PH",
 }
-TIER_PRICES = {"S": (300, 150), "A": (200, 100), "B": (100, 50)}
+TIER_PRICES = {"S": (300, 150), "A": (200, 100), "B": (100, 50), "PH": (250, 200)}
 
 def build_market_caption(tier, page):
     celebs = TIER_CELEBS[tier]
@@ -528,7 +528,9 @@ async def get_file_id(m: Message):
 
 @dp.message(Command("market"))
 async def market(m:Message):
-    for tier in ["S", "A", "B"]:
+    for tier in ["S", "A", "B", "PH"]:
+        if not TIER_CELEBS[tier]:
+            continue
         txt, photo_url = build_market_caption(tier, 0)
         kb = build_market_kb(tier, 0)
         photo = await resolve_photo(photo_url) if photo_url else None
@@ -584,7 +586,7 @@ async def collection(m:Message):
 async def send_collection_page(chat_id, owner_id, celebs, page, bot, viewer_id=None):
     name = celebs[page]
     tier, price, spin, photo_url = CELEBS[name]
-    tier_label = {"S": "🥇 S", "A": "🥈 A", "B": "🥉 B"}[tier]
+    tier_label = {"S": "🥇 S", "A": "🥈 A", "B": "🥉 B", "PH": "💎 PH"}[tier]
     txt = (
         f"📚 کالکشن — {page+1}/{len(celebs)}\n\n"
         f"👑 {name}\n"
@@ -619,7 +621,7 @@ async def collection_nav(q: CallbackQuery):
         page = len(celebs) - 1
     name = celebs[page]
     tier, price, spin, photo_url = CELEBS[name]
-    tier_label = {"S": "🥇 S", "A": "🥈 A", "B": "🥉 B"}[tier]
+    tier_label = {"S": "🥇 S", "A": "🥈 A", "B": "🥉 B", "PH": "💎 PH"}[tier]
     txt = (
         f"📚 کالکشن — {page+1}/{len(celebs)}\n\n"
         f"👑 {name}\n"
@@ -710,7 +712,7 @@ async def spin(m:Message):
     except:
         return await m.reply("استفاده: /spin s | a | b")
 
-    prices={"S":150,"A":100,"B":50}
+    prices={"S":150,"A":100,"B":50,"PH":200}
 
     if tier not in prices:
         return await m.reply("Tier باید s یا a یا b باشد.")
@@ -883,8 +885,8 @@ async def lock_celeb(m:Message):
     if name not in CELEBS:
         return await m.reply("❌ سلبریتی پیدا نشد.")
     tier_key = CELEBS[name][0]
-    if tier_key != "B":
-        return await m.reply("❌ فقط سلبریتی‌های Tier B نیاز به قفل دارن!")
+    if tier_key not in ("B", "PH"):
+        return await m.reply("❌ فقط سلبریتی‌های Tier B و PH نیاز به قفل دارن!")
     user(m.from_user.id, m.from_user.full_name)
     owned = c.execute("SELECT locked FROM collections WHERE user_id=? AND celeb=?", (m.from_user.id, name)).fetchone()
     if not owned:
