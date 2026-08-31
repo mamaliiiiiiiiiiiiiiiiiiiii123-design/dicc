@@ -1,4 +1,4 @@
-import os, sqlite3, random, time
+import os, sqlite3, random, time, re
 import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -18,6 +18,12 @@ c.execute("CREATE TABLE IF NOT EXISTS loans(lender_id INTEGER, borrower_id INTEG
 c.execute("CREATE TABLE IF NOT EXISTS listings(id INTEGER PRIMARY KEY AUTOINCREMENT, seller_id INTEGER, celeb TEXT, price INTEGER, active INTEGER DEFAULT 1)")
 c.execute("CREATE TABLE IF NOT EXISTS game_loans(user_id INTEGER PRIMARY KEY, amount INTEGER, due_time INTEGER)")
 db.commit()
+
+def strip_command(text: str) -> str:
+    """حذف /command یا /command@botusername از ابتدای متن و برگردوندن بقیه‌ی متن.
+    این کار لازمه چون تو گروه‌ها تلگرام معمولاً @یوزرنیم بات رو به دستور می‌چسبونه
+    (مثلاً /buy@YourBot Kylie Jenner) و replace ساده‌ی رشته این حالت رو درست پارس نمی‌کنه."""
+    return re.sub(r'^/\S+\s*', '', text or '', count=1).strip()
 
 def user(uid,name):
     c.execute("INSERT OR IGNORE INTO users(user_id,name) VALUES(?,?)",(uid,name))
@@ -431,7 +437,6 @@ CELEBS = {
     "Emma Watson": ("B",300,150,"AgACAgQAAxkBAAEiLHpqlZRQeIXIaNZcdp3gXLdrXT2anAACDRBrG8igqVC08ITVIg9XMAEAAwIAA3MAAz0E"),
     "Kristen Stewart": ("B",300,150,"AgACAgQAAxkBAAEiLHxqlZSorrGyLnSOBdRqRqdnSvnaXgACDxBrG8igqVDQHpTLZKuoOwEAAwIAA3MAAz0E"),
     "Olivia Cooke": ("A",200,100,"AgACAgQAAxkBAAEiLFBqlZC2pdCvovgiG6aqLJwG7oNBHAAC_w9rG8igqVC9yhxFuB9gDQEAAwIAA3MAAz0E"),
-    "Scarlett Johansson": ("A",200,100,"https://i.postimg.cc/rmT2mSRG/download-(7).jpg"),
     "Sabrina Carpenter": ("B",200,100,"AgACAgQAAxkBAAEiLGxqlZJxN_AeZTfMK1e_iZUiC4tvaAACBxBrG8igqVD1mfDtce21cAEAAwIAA3MAAz0E"),
     "Dua Lipa": ("A",100,50,"AgACAgQAAxkBAAEiLIRqlZW2x2U46kRw5iGd8GMcDrH5xAACFxBrG8igqVBqy7bfQ8pbLgEAAwIAA3MAAz0E"),
     "Sophie Tatcher": ("A",100,50,"AgACAgQAAxkBAAEiLExqlZBP5UH5p9rTTAUQ6hv3_mUpkAAC_g9rG8igqVABEzpZosgbbAEAAwIAA3MAAz0E"),
@@ -534,11 +539,17 @@ async def market(m:Message):
         txt, photo_url = build_market_caption(tier, 0)
         kb = build_market_kb(tier, 0)
         photo = await resolve_photo(photo_url) if photo_url else None
-        if photo:
-            sent = await m.bot.send_photo(m.chat.id, photo, caption=txt, reply_markup=kb)
-            if isinstance(photo, BufferedInputFile):
-                cache_photo(photo_url, sent)
-        else:
+        try:
+            if photo:
+                sent = await m.bot.send_photo(m.chat.id, photo, caption=txt, reply_markup=kb)
+                if isinstance(photo, BufferedInputFile):
+                    cache_photo(photo_url, sent)
+            else:
+                await m.bot.send_message(m.chat.id, txt, reply_markup=kb)
+        except Exception as e:
+            # اگه فرستادن عکس خراب شد (مثلاً file_id نامعتبره) کل دستور /market نباید بترکه؛
+            # به‌جاش پیام متنی می‌فرستیم تا بقیه‌ی تیرها هم نمایش داده بشن.
+            print(f"[market] خطا در ارسال عکس تیر {tier}: {e}")
             await m.bot.send_message(m.chat.id, txt, reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("mkt:"))
@@ -602,11 +613,15 @@ async def send_collection_page(chat_id, owner_id, celebs, page, bot, viewer_id=N
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"col:{owner_id}:{page+1}"))
     kb = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
     photo = await resolve_photo(photo_url) if photo_url else None
-    if photo:
-        sent = await bot.send_photo(chat_id, photo, caption=txt, reply_markup=kb)
-        if isinstance(photo, BufferedInputFile):
-            cache_photo(photo_url, sent)
-    else:
+    try:
+        if photo:
+            sent = await bot.send_photo(chat_id, photo, caption=txt, reply_markup=kb)
+            if isinstance(photo, BufferedInputFile):
+                cache_photo(photo_url, sent)
+        else:
+            await bot.send_message(chat_id, txt, reply_markup=kb)
+    except Exception as e:
+        print(f"[collection] خطا در ارسال عکس {name}: {e}")
         await bot.send_message(chat_id, txt, reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("col:"))
@@ -657,7 +672,7 @@ async def collection_nav(q: CallbackQuery):
 
 @dp.message(Command("buy"))
 async def buy(m:Message):
-    name=m.text.replace("/buy","",1).strip()
+    name=strip_command(m.text)
 
     if name not in CELEBS:
         return await m.reply("❌ سلبریتی پیدا نشد.")
@@ -698,11 +713,16 @@ async def buy(m:Message):
 
     photo_url = photo
     photo = await resolve_photo(photo_url) if photo_url else None
-    if photo:
-        sent = await m.bot.send_photo(m.chat.id, photo, caption=f"🎉 خرید موفق!\n\n👑 {name}")
-        if isinstance(photo, BufferedInputFile):
-            cache_photo(photo_url, sent)
-    else:
+    try:
+        if photo:
+            sent = await m.bot.send_photo(m.chat.id, photo, caption=f"🎉 خرید موفق!\n\n👑 {name}")
+            if isinstance(photo, BufferedInputFile):
+                cache_photo(photo_url, sent)
+        else:
+            await m.reply(f"🎉 خرید موفق!\n\n👑 {name}")
+    except Exception as e:
+        # خرید توی دیتابیس قبلاً ثبت شده، پس حتی اگه عکس نره حداقل تاییدیه‌ی متنی بره
+        print(f"[buy] خطا در ارسال عکس {name}: {e}")
         await m.reply(f"🎉 خرید موفق!\n\n👑 {name}")
 
 @dp.message(Command("spin"))
@@ -761,11 +781,15 @@ async def spin(m:Message):
 
     photo_url=CELEBS[celeb][3]
     photo = await resolve_photo(photo_url) if photo_url else None
-    if photo:
-        sent = await m.bot.send_photo(m.chat.id, photo, caption=f"🎰 اسپین موفق!\n\n👑 {celeb}")
-        if isinstance(photo, BufferedInputFile):
-            cache_photo(photo_url, sent)
-    else:
+    try:
+        if photo:
+            sent = await m.bot.send_photo(m.chat.id, photo, caption=f"🎰 اسپین موفق!\n\n👑 {celeb}")
+            if isinstance(photo, BufferedInputFile):
+                cache_photo(photo_url, sent)
+        else:
+            await m.reply(f"🎰 اسپین موفق!\n\n👑 {celeb}")
+    except Exception as e:
+        print(f"[spin] خطا در ارسال عکس {celeb}: {e}")
         await m.reply(f"🎰 اسپین موفق!\n\n👑 {celeb}")
 
 @dp.message(Command("collectors"))
@@ -821,11 +845,15 @@ async def list_celeb(m:Message):
         f"👤 فروشنده: {m.from_user.full_name}"
     )
     photo = await resolve_photo(photo_url) if photo_url else None
-    if photo:
-        sent = await m.bot.send_photo(m.chat.id, photo, caption=caption, reply_markup=kb)
-        if isinstance(photo, BufferedInputFile):
-            cache_photo(photo_url, sent)
-    else:
+    try:
+        if photo:
+            sent = await m.bot.send_photo(m.chat.id, photo, caption=caption, reply_markup=kb)
+            if isinstance(photo, BufferedInputFile):
+                cache_photo(photo_url, sent)
+        else:
+            await m.reply(caption, reply_markup=kb)
+    except Exception as e:
+        print(f"[list] خطا در ارسال عکس {name}: {e}")
         await m.reply(caption, reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("buyoff:"))
@@ -863,7 +891,7 @@ async def buyoff(q: CallbackQuery):
 
 @dp.message(Command("sell"))
 async def sell(m:Message):
-    name=m.text.replace("/sell","",1).strip()
+    name=strip_command(m.text)
     if name not in CELEBS:
         return await m.reply("❌ سلبریتی پیدا نشد.")
     user(m.from_user.id,m.from_user.full_name)
@@ -881,7 +909,7 @@ async def sell(m:Message):
 
 @dp.message(Command("lock"))
 async def lock_celeb(m:Message):
-    name = m.text.replace("/lock","",1).strip()
+    name = strip_command(m.text)
     if name not in CELEBS:
         return await m.reply("❌ سلبریتی پیدا نشد.")
     tier_key = CELEBS[name][0]
@@ -1004,7 +1032,7 @@ async def addcm(m:Message):
 async def addcb(m:Message):
     if m.from_user.id != ADMIN_ID:
         return await m.reply("❌ دسترسی ندارید!")
-    name = m.text.replace("/addcb","",1).strip()
+    name = strip_command(m.text)
     if not name:
         return await m.reply("Usage: /addcb [نام سلبریتی] (reply to a user)\nمثال: /addcb Dua Lipa")
     if name not in CELEBS:
