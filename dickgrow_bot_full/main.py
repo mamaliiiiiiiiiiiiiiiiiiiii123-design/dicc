@@ -1277,7 +1277,7 @@ async def company_open(m: Message):
     txt += (
         f"\n💰 هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ سایز فعلیت باشه؛ سقفی نداره!\n\n"
         f"برای سرمایه‌گذاری: /invest [شماره شرکت] [مقدار]\n"
-        f"برای دیدن وضعیت: /companies"
+        f"(سرمایه‌گذاری‌ها محرمانه‌ست و به کسی نشون داده نمیشه)"
     )
     await m.reply(txt)
 
@@ -1314,24 +1314,7 @@ async def company_invest(m: Message):
               (m.chat.id, round_id, slot, m.from_user.id, amount))
     c.execute("UPDATE company_participants SET invested=invested+? WHERE chat_id=? AND round_id=? AND user_id=?", (amount, m.chat.id, round_id, m.from_user.id))
     db.commit()
-    await m.reply(f"✅ {amount} سانت روی «{opt[0]}» سرمایه‌گذاری شد!")
-
-
-@dp.message(Command("companies"))
-async def company_status(m: Message):
-    round_id, status, open_time = get_round(m.chat.id)
-    if status != 'open':
-        return await m.reply("📉 الان بازاری باز نیست.")
-    opts = c.execute("SELECT slot,name,min_budget FROM company_options WHERE chat_id=? AND round_id=? ORDER BY slot", (m.chat.id, round_id)).fetchall()
-    txt = "📈 وضعیت بازار الان:\n\n"
-    for slot, name, min_budget in opts:
-        total = c.execute("SELECT COALESCE(SUM(amount),0) FROM company_investments WHERE chat_id=? AND round_id=? AND slot=?", (m.chat.id, round_id, slot)).fetchone()[0]
-        flag = "✅" if total >= min_budget else "⚠️"
-        txt += f"{slot}. {name} — {total}/{min_budget} سانت {flag}\n"
-    part = c.execute("SELECT invested FROM company_participants WHERE chat_id=? AND round_id=? AND user_id=?", (m.chat.id, round_id, m.from_user.id)).fetchone()
-    if part:
-        txt += f"\n💰 سرمایه‌گذاری تو این دور: {part[0]} سانت"
-    await m.reply(txt)
+    await m.reply("✅ سرمایه‌گذاریت با موفقیت و به صورت محرمانه ثبت شد!")
 
 
 @dp.message(Command("cclose"))
@@ -1387,7 +1370,7 @@ async def company_close(m: Message):
 async def my_companies(m: Message):
     rows = c.execute("SELECT id,name,value,workers,workers_bought,workers_used_mafia FROM owned_companies WHERE chat_id=? AND owner_id=?", (m.chat.id, m.from_user.id)).fetchall()
     if not rows:
-        return await m.reply("📭 هنوز هیچ شرکتی نداری! تو بازار بورس (/companies) شرکت کن.")
+        return await m.reply("📭 هنوز هیچ شرکتی نداری! وقتی بازار بورس بازه با /invest شرکت کن.")
     txt = "🏢 شرکت‌های تو:\n\n"
     for cid, name, value, workers, bought, used in rows:
         income = int(value * COMPANY_DIVIDEND_PCT)
@@ -1509,7 +1492,6 @@ async def main():
         BotCommand(command="gpay", description="✅ پرداخت وام بازی"),
         BotCommand(command="copen", description="📈 باز کردن بازار کمپانی (ادمین)"),
         BotCommand(command="invest", description="💰 سرمایه‌گذاری روی یه کمپانی"),
-        BotCommand(command="companies", description="📊 وضعیت بازار الان"),
         BotCommand(command="cclose", description="📉 بستن بازار و اعلام برنده (ادمین)"),
         BotCommand(command="mycompanies", description="🏢 کمپانی‌های من"),
         BotCommand(command="hire", description="🔫 خرید یار برای کمپانی"),
