@@ -1496,12 +1496,15 @@ async def main():
         BotCommand(command="buy", description="🛍 خرید سلبریتی"),
         BotCommand(command="sell", description="💸 فروش سلبریتی"),
         BotCommand(command="list", description="🏪 فروش به دیگران"),
+        BotCommand(command="lock", description="🔒 قفل کردن سلبریتی"),
         BotCommand(command="pvp", description="⚔️ دوئل"),
         BotCommand(command="mafia", description="🔫 جنگ مافیا تیمی"),
         BotCommand(command="mafia2", description="🔫 مافیا (فاش‌شدن تیم‌ها در پایان)"),
         BotCommand(command="loan", description="💰 وام دادن"),
         BotCommand(command="repay", description="✅ پرداخت بدهی"),
         BotCommand(command="collectors", description="🏆 بهترین کلکسیونرها"),
+        BotCommand(command="gloan", description="🏦 وام گرفتن از بازی"),
+        BotCommand(command="gpay", description="✅ پرداخت وام بازی"),
         BotCommand(command="copen", description="📈 باز کردن بازار کمپانی (ادمین)"),
         BotCommand(command="invest", description="💰 سرمایه‌گذاری روی یه کمپانی"),
         BotCommand(command="companies", description="📊 وضعیت بازار الان"),
@@ -1510,6 +1513,9 @@ async def main():
         BotCommand(command="hire", description="🔫 خرید یار برای کمپانی"),
         BotCommand(command="useyar", description="🕵️ فرستادن یار به نبرد مافیای فعلیت"),
         BotCommand(command="cashout", description="💸 نقد کردن نصف ارزش کمپانی"),
+        BotCommand(command="addcm", description="➕ افزودن سانت به کاربر (ادمین)"),
+        BotCommand(command="addcb", description="👑 دادن/گرفتن سلبریتی از کاربر (ادمین)"),
+        BotCommand(command="getfileid", description="🆔 گرفتن file_id عکس (ادمین)"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
     await bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
