@@ -6,7 +6,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.types import BufferedInputFile
 
 TOKEN = os.getenv("BOT_TOKEN")
-DB="database.db"
+DB = os.getenv("DB_PATH", "database.db")
 COOLDOWN=1*60*60
 ADMIN_ID=5952134460
 
