@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from aiogram.types import BufferedInputFile
+from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 
 TOKEN = os.getenv("BOT_TOKEN")
 DB = os.getenv("DB_PATH", "database.db")
@@ -70,6 +71,10 @@ def get_name(chat_id,uid):
     return row[0] if row else "کاربر"
 
 dp=Dispatcher()
+
+# نگهداری موقت سرمایه‌گذاری‌هایی که کاربر توی گروه دکمه‌ش رو زده ولی هنوز مبلغ رو توی پیوی نفرستاده
+pending_invest = {}  # user_id -> {"chat_id":..., "round_id":..., "slot":..., "ts":...}
+PENDING_INVEST_TTL = 10 * 60  # بعد از ۱۰ دقیقه منقضی می‌شه
 
 @dp.message(Command("grow"))
 async def grow(m:Message):
@@ -1276,45 +1281,94 @@ async def company_open(m: Message):
         txt += f"{i}. {name} (حداقل بودجه: {mb} سانت)\n"
     txt += (
         f"\n💰 هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ سایز فعلیت باشه؛ سقفی نداره!\n\n"
-        f"برای سرمایه‌گذاری: /invest [شماره شرکت] [مقدار]\n"
-        f"(سرمایه‌گذاری‌ها محرمانه‌ست و به کسی نشون داده نمیشه)"
+        f"برای سرمایه‌گذاری فقط بنویس /invest (بدون هیچ عددی!)\n"
+        f"ربات میاد پیوی خصوصی باهات هماهنگ می‌کنه که کسی نفهمه رو چی و چقدر سرمایه‌گذاری کردی."
     )
     await m.reply(txt)
 
 
 @dp.message(Command("invest"))
-async def company_invest(m: Message):
-    try:
-        parts = m.text.split()
-        slot = int(parts[1]); amount = int(parts[2])
-    except:
-        return await m.reply("Usage: /invest [شماره شرکت ۱ تا ۴] [مقدار]")
-    if amount <= 0:
-        return await m.reply("❌ مقدار باید مثبت باشه.")
+async def company_invest_start(m: Message):
+    if m.chat.type == "private":
+        return await m.reply("❌ این دستور رو باید توی همون گروهی که بازی می‌کنی بزنی.")
     round_id, status, open_time = get_round(m.chat.id)
     if status != 'open':
         return await m.reply("❌ الان بازاری باز نیست!")
-    opt = c.execute("SELECT name FROM company_options WHERE chat_id=? AND round_id=? AND slot=?", (m.chat.id, round_id, slot)).fetchone()
-    if not opt:
-        return await m.reply("❌ همچین شرکتی وجود نداره! (بین ۱ تا ۴)")
     user(m.chat.id, m.from_user.id, m.from_user.full_name)
-    size = get_size(m.chat.id, m.from_user.id)
+    opts = c.execute("SELECT slot,name FROM company_options WHERE chat_id=? AND round_id=? ORDER BY slot", (m.chat.id, round_id)).fetchall()
+    if not opts:
+        return await m.reply("❌ شرکتی برای این دور پیدا نشد.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{slot}. {name}", callback_data=f"investpick:{m.chat.id}:{round_id}:{slot}")]
+        for slot, name in opts
+    ])
+    tip = ""
+    if len(m.text.split()) > 1:
+        tip = "\n\n💡 دیگه لازم نیست بعد /invest عدد بنویسی — کل انتخاب رو همینجا با دکمه انجام بده."
+    try:
+        await m.bot.send_message(
+            m.from_user.id,
+            "📈 روی کدوم شرکت می‌خوای سرمایه‌گذاری کنی؟\n(این پیام فقط برای خودته)" + tip,
+            reply_markup=kb
+        )
+    except (TelegramForbiddenError, TelegramBadRequest):
+        return await m.reply("❌ اول باید ربات رو توی پیوی (چت خصوصی) استارت کنی، بعد دوباره اینجا /invest بزن.")
+    await m.reply("📩 برات پیام خصوصی فرستادم! بقیه‌ی سرمایه‌گذاری رو اونجا انجام بده تا لو نره.")
+
+
+@dp.callback_query(F.data.startswith("investpick:"))
+async def company_invest_pick(q: CallbackQuery):
+    _, chat_id, round_id, slot = q.data.split(":")
+    chat_id, round_id, slot = int(chat_id), int(round_id), int(slot)
+    cur_round_id, status, open_time = get_round(chat_id)
+    if status != 'open' or cur_round_id != round_id:
+        return await q.answer("❌ این دور بازار دیگه بسته یا منقضی شده.", show_alert=True)
+    opt = c.execute("SELECT name FROM company_options WHERE chat_id=? AND round_id=? AND slot=?", (chat_id, round_id, slot)).fetchone()
+    if not opt:
+        return await q.answer("❌ همچین شرکتی پیدا نشد.", show_alert=True)
+    pending_invest[q.from_user.id] = {"chat_id": chat_id, "round_id": round_id, "slot": slot, "ts": int(time.time())}
+    await q.answer()
+    await q.message.edit_text(f"💰 چند سانت می‌خوای روی «{opt[0]}» سرمایه‌گذاری کنی؟\nفقط عددشو بفرست (مثلاً 12).")
+
+
+@dp.message(F.chat.type == "private", F.text.regexp(r'^\d+$'))
+async def company_invest_amount(m: Message):
+    pending = pending_invest.get(m.from_user.id)
+    if not pending:
+        return
+    if int(time.time()) - pending["ts"] > PENDING_INVEST_TTL:
+        del pending_invest[m.from_user.id]
+        return await m.reply("⌛️ زمان انتخابت تموم شد، دوباره از توی گروه /invest بزن.")
+    amount = int(m.text)
+    chat_id, round_id, slot = pending["chat_id"], pending["round_id"], pending["slot"]
+    if amount <= 0:
+        return await m.reply("❌ مقدار باید مثبت باشه.")
+    cur_round_id, status, open_time = get_round(chat_id)
+    if status != 'open' or cur_round_id != round_id:
+        del pending_invest[m.from_user.id]
+        return await m.reply("❌ بازار اون گروه بسته یا عوض شده، دوباره از توی گروه /invest بزن.")
+    opt = c.execute("SELECT name FROM company_options WHERE chat_id=? AND round_id=? AND slot=?", (chat_id, round_id, slot)).fetchone()
+    if not opt:
+        del pending_invest[m.from_user.id]
+        return await m.reply("❌ این شرکت دیگه وجود نداره.")
+    size = get_size(chat_id, m.from_user.id)
     if size < amount:
         return await m.reply("❌ سانت کافی نداری.")
     min_required = max(1, int(size * COMPANY_MIN_INVEST_PCT))
     if amount < min_required:
         return await m.reply(f"❌ هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ سایزت باشه!\n📊 حداقل مجاز الان: {min_required} سانت")
-    part = c.execute("SELECT invested FROM company_participants WHERE chat_id=? AND round_id=? AND user_id=?", (m.chat.id, round_id, m.from_user.id)).fetchone()
+    part = c.execute("SELECT invested FROM company_participants WHERE chat_id=? AND round_id=? AND user_id=?", (chat_id, round_id, m.from_user.id)).fetchone()
     if not part:
-        c.execute("INSERT INTO company_participants(chat_id,round_id,user_id,invested) VALUES(?,?,?,0)", (m.chat.id, round_id, m.from_user.id))
+        c.execute("INSERT INTO company_participants(chat_id,round_id,user_id,invested) VALUES(?,?,?,0)", (chat_id, round_id, m.from_user.id))
         db.commit()
-    c.execute("UPDATE users SET size=size-? WHERE chat_id=? AND user_id=?", (amount, m.chat.id, m.from_user.id))
+    c.execute("UPDATE users SET size=size-? WHERE chat_id=? AND user_id=?", (amount, chat_id, m.from_user.id))
     c.execute("""INSERT INTO company_investments(chat_id,round_id,slot,user_id,amount) VALUES(?,?,?,?,?)
                  ON CONFLICT(chat_id,round_id,slot,user_id) DO UPDATE SET amount=amount+excluded.amount""",
-              (m.chat.id, round_id, slot, m.from_user.id, amount))
-    c.execute("UPDATE company_participants SET invested=invested+? WHERE chat_id=? AND round_id=? AND user_id=?", (amount, m.chat.id, round_id, m.from_user.id))
+              (chat_id, round_id, slot, m.from_user.id, amount))
+    c.execute("UPDATE company_participants SET invested=invested+? WHERE chat_id=? AND round_id=? AND user_id=?", (amount, chat_id, round_id, m.from_user.id))
     db.commit()
-    await m.reply("✅ سرمایه‌گذاریت با موفقیت و به صورت محرمانه ثبت شد!")
+    del pending_invest[m.from_user.id]
+    await m.reply("✅ سرمایه‌گذاریت با موفقیت و کاملاً محرمانه ثبت شد!")
 
 
 @dp.message(Command("cclose"))
