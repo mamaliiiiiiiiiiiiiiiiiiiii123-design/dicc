@@ -319,7 +319,7 @@ async def mafia_resolve(q:CallbackQuery):
             wteam=random.choice([1,2])
             winners,losers=(team1,team2) if wteam==1 else (team2,team1)
         # یارهای خریداری‌شده از کمپانی کیر شناسه‌ی منفی دارن: توی شمارش تیم حساب میشن ولی سهمی از جایزه نمی‌برن
-        human_count=sum(1 for u,_ in members if u>0)
+        human_count=sum(1 for u,_,_t in members if u>0)
         winners_human=[(u,n) for u,n in winners if u>0]
         total_pot=bet*human_count
         share=total_pot//len(winners_human) if winners_human else 0
@@ -476,7 +476,7 @@ async def mafia2_resolve(q:CallbackQuery):
             wteam=random.choice([1,2])
             winners=team1 if wteam==1 else team2
         # یارهای خریداری‌شده از کمپانی کیر شناسه‌ی منفی دارن: توی شمارش تیم حساب میشن ولی سهمی از جایزه نمی‌برن
-        human_count=sum(1 for u,_ in members if u>0)
+        human_count=sum(1 for u,_,_t in members if u>0)
         winners_human=[(u,n) for u,n in winners if u>0]
         total_pot=bet*human_count
         share=total_pot//len(winners_human) if winners_human else 0
