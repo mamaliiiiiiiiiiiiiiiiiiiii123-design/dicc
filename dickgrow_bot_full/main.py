@@ -25,6 +25,7 @@ c.execute("""CREATE TABLE IF NOT EXISTS users(
     user_id INTEGER,
     name TEXT,
     size INTEGER DEFAULT 0,
+    sperm INTEGER DEFAULT 0,
     debt INTEGER DEFAULT 0,
     last_grow INTEGER DEFAULT 0,
     PRIMARY KEY(chat_id, user_id)
@@ -54,6 +55,14 @@ c.execute("""CREATE TABLE IF NOT EXISTS game_loans(
 )""")
 db.commit()
 
+try:
+    c.execute("ALTER TABLE users ADD COLUMN sperm INTEGER DEFAULT 0")
+    db.commit()
+except sqlite3.OperationalError:
+    pass
+
+SPERM_RATE = 2  # ۱ سانت = ۲ اسپرم (واحد جداگانه‌ی بخش بورس)
+
 def strip_command(text: str) -> str:
     """حذف /command یا /command@botusername از ابتدای متن و برگردوندن بقیه‌ی متن.
     این کار لازمه چون تو گروه‌ها تلگرام معمولاً @یوزرنیم بات رو به دستور می‌چسبونه
@@ -67,6 +76,10 @@ def user(chat_id,uid,name):
 
 def get_size(chat_id,uid):
     row=c.execute("SELECT size FROM users WHERE chat_id=? AND user_id=?",(chat_id,uid)).fetchone()
+    return row[0] if row else 0
+
+def get_sperm(chat_id,uid):
+    row=c.execute("SELECT sperm FROM users WHERE chat_id=? AND user_id=?",(chat_id,uid)).fetchone()
     return row[0] if row else 0
 
 def get_name(chat_id,uid):
@@ -97,10 +110,45 @@ async def grow(m:Message):
 @dp.message(Command("size"))
 async def size(m:Message):
     user(m.chat.id,m.from_user.id,m.from_user.full_name)
-    s,d=c.execute("SELECT size,debt FROM users WHERE chat_id=? AND user_id=?",(m.chat.id,m.from_user.id)).fetchone()
+    s,sp,d=c.execute("SELECT size,sperm,debt FROM users WHERE chat_id=? AND user_id=?",(m.chat.id,m.from_user.id)).fetchone()
     await m.reply(
-        f"📊 پروفایل شما\n\n🍆 اندازه: {s} سانت\n💸 بدهی: {d} سانت"
+        f"📊 پروفایل شما\n\n🍆 اندازه: {s} سانت\n🧬 اسپرم (بورس): {sp}\n💸 بدهی: {d} سانت"
     )
+
+@dp.message(Command("tosperm"))
+async def to_sperm(m:Message):
+    try:
+        amount=int(m.text.split()[1])
+    except:
+        return await m.reply(f"استفاده: /tosperm [مقدار سانت]\nنرخ: هر ۱ سانت = {SPERM_RATE} اسپرم")
+    if amount<=0:
+        return await m.reply("❌ مقدار باید مثبت باشه.")
+    user(m.chat.id,m.from_user.id,m.from_user.full_name)
+    if get_size(m.chat.id,m.from_user.id)<amount:
+        return await m.reply("❌ سانت کافی نداری.")
+    gained=amount*SPERM_RATE
+    c.execute("UPDATE users SET size=size-?,sperm=sperm+? WHERE chat_id=? AND user_id=?",(amount,gained,m.chat.id,m.from_user.id))
+    db.commit()
+    await m.reply(f"🧬 {amount} سانت تبدیل شد به {gained} اسپرم!")
+
+@dp.message(Command("tocent"))
+async def to_cent(m:Message):
+    try:
+        amount=int(m.text.split()[1])
+    except:
+        return await m.reply(f"استفاده: /tocent [مقدار اسپرم]\nنرخ: هر {SPERM_RATE} اسپرم = ۱ سانت")
+    if amount<=0:
+        return await m.reply("❌ مقدار باید مثبت باشه.")
+    user(m.chat.id,m.from_user.id,m.from_user.full_name)
+    if get_sperm(m.chat.id,m.from_user.id)<amount:
+        return await m.reply("❌ اسپرم کافی نداری.")
+    gained=amount//SPERM_RATE
+    if gained<=0:
+        return await m.reply(f"❌ حداقل {SPERM_RATE} اسپرم لازمه تا ۱ سانت بگیری.")
+    used=gained*SPERM_RATE
+    c.execute("UPDATE users SET sperm=sperm-?,size=size+? WHERE chat_id=? AND user_id=?",(used,gained,m.chat.id,m.from_user.id))
+    db.commit()
+    await m.reply(f"💰 {used} اسپرم تبدیل شد به {gained} سانت!")
 
 @dp.message(Command("loan"))
 async def loan(m:Message):
@@ -876,9 +924,8 @@ async def spin(m:Message):
             return await m.reply(f"🔒 این سلبریتی توسط {owner_name} قفل شده!\n\n👑 {celeb}\n💰 {cost} سانت برگشت داده شد.")
 
     # ===== ارزش فروش (paid_price) برای سلبریتی گرفته‌شده از اسپین =====
-    # قبلاً همیشه cost//2 ذخیره میشد که برای تیرهای غیر از B با قصد واقعی هماهنگ نبود.
-    # الان: تیر B → نصف هزینه‌ی اسپین (مثل قبل)، بقیه‌ی تیرها (S/A/PH) → دقیقاً هزینه‌ی اسپین.
-    resale_value = cost // 2 if spin_tier == "B" else cost
+    # تیر B → نصف هزینه‌ی اسپین، بقیه‌ی تیرها (S/A/PH) → ۷۵٪ هزینه‌ی اسپین.
+    resale_value = cost // 2 if spin_tier == "B" else (cost * 3) // 4
 
     c.execute(
         "INSERT INTO collections(chat_id,user_id,celeb,paid_price) VALUES(?,?,?,?)",
@@ -1311,9 +1358,10 @@ async def company_open(m: Message):
     db.commit()
     txt = "📈 بازار بورس کیر باز شد!\n\n"
     for i, (name, mb) in enumerate(zip(names, min_budgets), 1):
-        txt += f"{i}. {name} (حداقل بودجه: {mb} سانت)\n"
+        txt += f"{i}. {name} (حداقل بودجه: {mb} اسپرم)\n"
     txt += (
-        f"\n💰 هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ سایز فعلیت باشه؛ سقفی نداره!\n\n"
+        f"\n🧬 هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ اسپرمت باشه؛ سقفی نداره!\n"
+        f"(نداری؟ با /tosperm سانتت رو تبدیل کن — هر ۱ سانت = {SPERM_RATE} اسپرم)\n\n"
         f"برای سرمایه‌گذاری فقط بنویس /invest (بدون هیچ عددی!)\n"
         f"ربات میاد پیوی خصوصی باهات هماهنگ می‌کنه که کسی نفهمه رو چی و چقدر سرمایه‌گذاری کردی."
     )
@@ -1361,7 +1409,7 @@ async def company_invest_pick(q: CallbackQuery):
         return await q.answer("❌ همچین شرکتی پیدا نشد.", show_alert=True)
     pending_invest[q.from_user.id] = {"chat_id": chat_id, "round_id": round_id, "slot": slot, "ts": int(time.time())}
     await q.answer()
-    await q.message.edit_text(f"💰 چند سانت می‌خوای روی «{opt[0]}» سرمایه‌گذاری کنی؟\nفقط عددشو بفرست (مثلاً 12).")
+    await q.message.edit_text(f"🧬 چند اسپرم می‌خوای روی «{opt[0]}» سرمایه‌گذاری کنی؟\nفقط عددشو بفرست (مثلاً 12).\n(نداری؟ با /tosperm سانتت رو تبدیل کن.)")
 
 
 @dp.message(F.chat.type == "private", F.text.regexp(r'^\d+$'))
@@ -1384,17 +1432,17 @@ async def company_invest_amount(m: Message):
     if not opt:
         del pending_invest[m.from_user.id]
         return await m.reply("❌ این شرکت دیگه وجود نداره.")
-    size = get_size(chat_id, m.from_user.id)
-    if size < amount:
-        return await m.reply("❌ سانت کافی نداری.")
-    min_required = max(1, int(size * COMPANY_MIN_INVEST_PCT))
+    sperm = get_sperm(chat_id, m.from_user.id)
+    if sperm < amount:
+        return await m.reply(f"❌ اسپرم کافی نداری. (موجودی: {sperm})\nبا /tosperm می‌تونی سانتت رو تبدیل کنی.")
+    min_required = max(1, int(sperm * COMPANY_MIN_INVEST_PCT))
     if amount < min_required:
-        return await m.reply(f"❌ هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ سایزت باشه!\n📊 حداقل مجاز الان: {min_required} سانت")
+        return await m.reply(f"❌ هر سرمایه‌گذاری باید حداقل {int(COMPANY_MIN_INVEST_PCT*100)}٪ اسپرمت باشه!\n📊 حداقل مجاز الان: {min_required} اسپرم")
     part = c.execute("SELECT invested FROM company_participants WHERE chat_id=? AND round_id=? AND user_id=?", (chat_id, round_id, m.from_user.id)).fetchone()
     if not part:
         c.execute("INSERT INTO company_participants(chat_id,round_id,user_id,invested) VALUES(?,?,?,0)", (chat_id, round_id, m.from_user.id))
         db.commit()
-    c.execute("UPDATE users SET size=size-? WHERE chat_id=? AND user_id=?", (amount, chat_id, m.from_user.id))
+    c.execute("UPDATE users SET sperm=sperm-? WHERE chat_id=? AND user_id=?", (amount, chat_id, m.from_user.id))
     c.execute("""INSERT INTO company_investments(chat_id,round_id,slot,user_id,amount) VALUES(?,?,?,?,?)
                  ON CONFLICT(chat_id,round_id,slot,user_id) DO UPDATE SET amount=amount+excluded.amount""",
               (chat_id, round_id, slot, m.from_user.id, amount))
@@ -1429,8 +1477,8 @@ async def company_close(m: Message):
     txt = "📉 نتیجه‌ی بازار بورس!\n\n"
     for slot, (name, total, min_budget) in totals.items():
         if slot in eliminated:
-            reason = "گنده شد و ترکید 💥" if slot == max_slot else f"به حداقل بودجه‌ش ({min_budget} سانت) نرسید 📉"
-            txt += f"❌ {name} ({total} سانت) — {reason}\n"
+            reason = "گنده شد و ترکید 💥" if slot == max_slot else f"به حداقل بودجه‌ش ({min_budget} اسپرم) نرسید 📉"
+            txt += f"❌ {name} ({total} اسپرم) — {reason}\n"
             continue
         top = c.execute(
             "SELECT user_id,amount FROM company_investments WHERE chat_id=? AND round_id=? AND slot=? ORDER BY amount DESC LIMIT 1",
@@ -1446,7 +1494,7 @@ async def company_close(m: Message):
             (m.chat.id, winner_id, name, total, workers, now)
         )
         winner_name = get_name(m.chat.id, winner_id)
-        txt += f"👑 {name} ({total} سانت) — برنده: {winner_name} (سهم {winner_amount} سانت)\n"
+        txt += f"👑 {name} ({total} اسپرم) — برنده: {winner_name} (سهم {winner_amount} اسپرم)\n"
 
     c.execute("UPDATE company_rounds SET status='closed' WHERE chat_id=?", (m.chat.id,))
     db.commit()
@@ -1462,7 +1510,7 @@ async def my_companies(m: Message):
     for cid, name, value, workers, bought, used in rows:
         income = int(value * COMPANY_DIVIDEND_PCT)
         available = bought - used
-        txt += f"#{cid} {name}\n💰 ارزش: {value} سانت | 📈 سود روزانه: {income} سانت\n👥 یار: {bought}/{workers} خریداری‌شده ({available} آماده‌ی استفاده با /useyar)\n\n"
+        txt += f"#{cid} {name}\n🧬 ارزش: {value} اسپرم | 📈 سود روزانه: {income} اسپرم\n👥 یار: {bought}/{workers} خریداری‌شده ({available} آماده‌ی استفاده با /useyar)\n\n"
     await m.reply(txt)
 
 
@@ -1480,10 +1528,10 @@ async def hire_worker(m: Message):
         return await m.reply("❌ این شرکت مال تو نیست!")
     if bought >= workers:
         return await m.reply(f"❌ همه‌ی {workers} یار این شرکت رو قبلاً خریدی!")
-    size = get_size(m.chat.id, m.from_user.id)
-    if size < COMPANY_WORKER_COST:
-        return await m.reply(f"❌ برای خرید یار به {COMPANY_WORKER_COST} سانت نیاز داری.")
-    c.execute("UPDATE users SET size=size-? WHERE chat_id=? AND user_id=?", (COMPANY_WORKER_COST, m.chat.id, m.from_user.id))
+    sperm = get_sperm(m.chat.id, m.from_user.id)
+    if sperm < COMPANY_WORKER_COST:
+        return await m.reply(f"❌ برای خرید یار به {COMPANY_WORKER_COST} اسپرم نیاز داری.")
+    c.execute("UPDATE users SET sperm=sperm-? WHERE chat_id=? AND user_id=?", (COMPANY_WORKER_COST, m.chat.id, m.from_user.id))
     c.execute("UPDATE owned_companies SET workers_bought=workers_bought+1 WHERE id=?", (cid,))
     db.commit()
     await m.reply(f"✅ یه یار از «{name}» خریدی! ({bought+1}/{workers})\n🔫 برای فرستادنش به یه نبرد مافیا که توش هستی: /useyar")
@@ -1527,9 +1575,9 @@ async def cashout_company(m: Message):
     if cashed <= 0:
         return await m.reply("❌ ارزش شرکت خیلی کمه که چیزی نقد بشه.")
     c.execute("UPDATE owned_companies SET value=value-? WHERE id=?", (cashed, cid))
-    c.execute("UPDATE users SET size=size+? WHERE chat_id=? AND user_id=?", (cashed, m.chat.id, m.from_user.id))
+    c.execute("UPDATE users SET sperm=sperm+? WHERE chat_id=? AND user_id=?", (cashed, m.chat.id, m.from_user.id))
     db.commit()
-    await m.reply(f"💸 نصف ارزش «{name}» نقد شد!\n💰 {cashed} سانت به حسابت اضافه شد.\n📉 ارزش باقی‌مونده‌ی شرکت: {value-cashed} سانت")
+    await m.reply(f"🧬 نصف ارزش «{name}» نقد شد!\n💰 {cashed} اسپرم به حسابت اضافه شد.\n📉 ارزش باقی‌مونده‌ی شرکت: {value-cashed} اسپرم\n(برای تبدیل به سانت: /tocent)")
 
 
 async def company_dividend_loop(bot):
@@ -1546,11 +1594,11 @@ async def company_dividend_loop(bot):
                 db.commit()
                 continue
             income = int(value * COMPANY_DIVIDEND_PCT)
-            c.execute("UPDATE users SET size=size+? WHERE chat_id=? AND user_id=?", (income, chat_id, owner_id))
+            c.execute("UPDATE users SET sperm=sperm+? WHERE chat_id=? AND user_id=?", (income, chat_id, owner_id))
             c.execute("UPDATE owned_companies SET last_payout=? WHERE id=?", (now, cid))
             db.commit()
             try:
-                await bot.send_message(owner_id, f"📈 سود روزانه‌ی شرکتت «{name}»!\n💰 {income} سانت به حسابت اضافه شد.")
+                await bot.send_message(owner_id, f"📈 سود روزانه‌ی شرکتت «{name}»!\n🧬 {income} اسپرم به حسابت اضافه شد.")
             except:
                 pass
 # ================== پایان کمپانی کیر ==================
@@ -1561,6 +1609,8 @@ async def main():
     commands = [
         BotCommand(command="grow", description="🌱 رشد کن"),
         BotCommand(command="size", description="📊 اندازه و پروفایل"),
+        BotCommand(command="tosperm", description="🧬 تبدیل سانت به اسپرم"),
+        BotCommand(command="tocent", description="💰 تبدیل اسپرم به سانت"),
         BotCommand(command="top", description="🏆 جدول بزرگان"),
         BotCommand(command="market", description="🛒 بازار سلبریتی"),
         BotCommand(command="collection", description="📚 کالکشن من"),
